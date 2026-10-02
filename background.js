@@ -3,6 +3,15 @@
 const TOGGLES = { 'toggle-hdr': 'enabled', 'toggle-split': 'split' };
 
 chrome.commands.onCommand.addListener(async (command) => {
+  if (command === 'toggle-method') {
+    // Flip between the shader and the trained model, if one is loaded.
+    const cur = await chrome.storage.local.get({ method: 'shader', modelInfo: null });
+    if (cur.modelInfo) {
+      const method = cur.method === 'model' ? 'shader' : 'model';
+      await chrome.storage.local.set({ method, splitRight: method });   // the split's right side follows the method
+    }
+    return;
+  }
   const key = TOGGLES[command];
   if (!key) return;
   const cur = await chrome.storage.local.get({ enabled: true, split: false });

@@ -1,0 +1,59 @@
+<!doctype html>
+<html>
+<head>
+<meta charset="utf-8">
+<title>SDR to HDR: trained model</title>
+<link rel="stylesheet" href="ui.css">
+<style>
+  html, body { min-height: 100%; }
+  body { font-size: 14px; display: flex; align-items: center; justify-content: center; padding: 24px 16px; }
+  .b1 { width: 320px; height: 320px; left: 8%; top: 6%; background: var(--lavender); }
+  .b2 { width: 300px; height: 300px; right: 8%; top: 30%; background: var(--pink); }
+  .b3 { width: 280px; height: 280px; left: 30%; bottom: 4%; background: var(--sky); }
+  main { position: relative; z-index: 1; width: 520px; max-width: 100%; display: flex; flex-direction: column; gap: 12px; }
+  .card { padding: 16px 18px; }
+  h1 { font-size: 17px; font-weight: 700; margin-bottom: 6px; }
+  p { margin: 0 0 10px; line-height: 1.5; color: var(--ink-soft); }
+  p:last-child { margin-bottom: 0; }
+  code { font-size: 12.5px; padding: 1px 6px; border-radius: 6px; background: var(--glass-strong); border: 1px solid var(--edge); color: var(--ink); overflow-wrap: anywhere; }
+  dl { display: grid; grid-template-columns: auto 1fr; gap: 5px 16px; margin: 8px 0 0; }
+  dt { color: var(--ink-soft); }
+  dd { margin: 0; font-weight: 600; font-variant-numeric: tabular-nums; }
+  .buttons { display: flex; gap: 8px; flex-wrap: wrap; align-items: center; margin-top: 14px; }
+  #msg { min-height: 1.4em; margin-top: 10px; font-size: 13px; color: var(--ink); }
+  #msg.bad { color: var(--warn); font-weight: 600; }
+  input[type=file] { position: absolute; width: 1px; height: 1px; opacity: 0; }
+  label.btn { cursor: pointer; }
+  label.btn:focus-within { outline: 2px solid var(--focus); outline-offset: 2px; }
+</style>
+</head>
+<body>
+  <div class="blob b1"></div><div class="blob b2"></div><div class="blob b3"></div>
+  <main>
+    <section class="card">
+      <h1>Trained model</h1>
+      <p>A model made with HDR Trainer can decide how bright each part of the picture gets, in place of the built-in shader. Everything else (colour, sharpening, roll-off to your display) works the same either way.</p>
+      <p>In HDR Trainer click <b>Export model</b>, then choose the file it wrote: <code>hdr-trainer/workspace/export/hdr-model.json</code>. The file stays on this computer.</p>
+      <div class="buttons">
+        <label class="btn primary"><input type="file" id="file" accept=".json,application/json">Choose model file</label>
+        <button class="btn" id="remove" hidden>Remove model</button>
+      </div>
+      <div id="msg" role="status"></div>
+    </section>
+
+    <section class="card" id="current" hidden>
+      <h2 class="eyebrow">Loaded model</h2>
+      <dl id="facts"></dl>
+    </section>
+
+    <section class="card">
+      <h2 class="eyebrow">Comparing it with the shader</h2>
+      <p>In the popup, <b>Method</b> switches between the shader and the model. <span id="keyMethod"></span></p>
+      <p><b>Split</b> shows two pictures at once on a video, one each side of a line you can drag. Its two menus pick what each side shows: the original, the shader or the model. So you can put the shader against the model, or the model against the untouched original.</p>
+      <p>With the model in use, the Reach, Shaping and Colour lights sliders do nothing, because they tune the shader's own brightness decisions. Peak brightness becomes a ceiling the model's highlights ease into.</p>
+    </section>
+  </main>
+  <script src="model.js"></script>
+  <script src="model-page.js"></script>
+</body>
+</html>

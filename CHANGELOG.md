@@ -2,6 +2,81 @@
 
 All notable changes to SDR to HDR Video. Versions follow the number in `manifest.json`.
 
+## 0.8.4 - 2026-10-02
+
+A review of the code since trained models were added. One real bug, one mismatch with how models are trained, and a round of hardening.
+
+### Fixed
+
+- **With a trained model in use, conversion could fail to start.** It worked for the first video on a page, but any conversion started after the model was loaded (the next video on YouTube, or after switching the extension off and on) failed, was retried every second, and left stray "HDR" badges on the page. Present since 0.8.0.
+- **Videos that aren't 16:9 were shown to the model stretched.** The trainer never does that: it shows a wide or narrow film with black bars. The extension now does the same, and each pixel reads the model's answer for its own place in the picture. 16:9 video is unchanged.
+- **The first line of a report** counted frames from the start of the page instead of from when conversion started, so it showed a large false drop.
+
+### Changed
+
+- **A fault while starting to convert a video is cleaned up**, written to the history with its cause, and retried a few seconds later. Before, the cause was discarded and whatever had already been added to the page was left there.
+- **A fault while drawing one frame can't stop the frames after it**, and is written to the history once.
+- **A frame that can't be read is skipped** and conversion carries on; it only stops, to be retried, if frames stay unreadable for two seconds. A video that then runs normally gets a clean slate.
+- **The popup says when the extension isn't running on the page**, which happens when the page was open before the extension was installed, updated or reloaded: "Refresh the page to start it."
+- The report has a second measure of how busy the page was (`lag`: how late a regular timer ran).
+- On a page with no WebGPU at all, this is said once in the history instead of being retried.
+- Removing the model frees its memory on the GPU straight away.
+
+## 0.8.3 - 2026-10-02
+
+For working out why the extension sometimes doesn't engage on a video.
+
+### Added
+
+- **The report now explains itself.** The popup's **Report** button works on any page, converting or not, and lists every video on the page with the reason it isn't being converted (too small, already HDR, DRM, unreadable, no frame yet, extension or site switched off, no HDR display, WebGPU failed).
+- **A history of what the extension did** on the page is kept and included in the report: videos found, conversions started and stopped with the reason, errors and quality changes. The last 150 entries, until the page is reloaded.
+
+### Fixed
+
+- **A passing failure no longer switches a video off for good.** If reading a video's frame failed for any reason, the extension gave up on that video until its source changed. Now only a video the browser forbids reading is given up on; anything else is retried after three seconds, up to five times.
+- **WebGPU failing to start is retried.** It used to disable the extension on that page until reload. It now tries again after 5 seconds, then at growing intervals up to a minute.
+
+## 0.8.2 - 2026-10-02
+
+More tools for the fullscreen stutter report. A tester found it is worst at the start of a freshly loaded video and gone after seeking back, which the on-video stats alone can't explain.
+
+### Added
+
+- **Report** button in the popup. It copies a plain-text diagnostic report for the video on the current tab: GPU, screen, settings, and a line for every three seconds of the last few minutes with frames drawn and dropped, the longest gap, how late the page heard about frames, how long drawing and the GPU took, how busy the page was, frames the decoder dropped, seconds buffered, and video events such as buffering or a quality change. It is recorded continuously, so it can be copied after the problem has happened. Nothing leaves your computer except by you pasting it.
+
+## 0.8.1 - 2026-10-02
+
+### Changed
+
+- **Split view has a menu for each side.** Choose Original, Shader or Model for the left and for the right of the line, in any pairing: the model against the untouched original, the shader against the model, and so on. This replaces the fixed "Original | HDR" and "Shader | Model" choices from 0.8.0. A switch next to the menus turns split view on and off.
+- Changing **Method** (in the popup or with Alt+Shift+M) also sets the right-hand side of the split to that method.
+- The badge names both sides while split view is on, for example **ORIGINAL | MODEL**.
+
+## 0.8.0 - 2026-10-02
+
+Trained models. A model made with HDR Trainer can now decide the brightness in place of the shader.
+
+### Added
+
+- **Trained model support.** Load the `hdr-model.json` that HDR Trainer exports (popup: **Load**, next to **Method**) and the extension runs it on the GPU for every video frame. Everything stays on your computer.
+- **Method** setting in the popup: **Shader** or **Your model**.
+- **Split view: Shader | Model**, which shows the shader's result left of the line and the model's on the right.
+- **Alt+Shift+M** switches between the shader and the model.
+- The badge reads **HDR · MODEL** while the model is in use, and **SHADER | MODEL** in the comparison split.
+- A page for loading, replacing and removing the model, showing its training steps, number of movies and score.
+
+### Changed
+
+- **Split view** is now a menu (Off, Original | HDR, Shader | Model) instead of a switch.
+- While the model is in use, **Reach**, **Shaping** and **Colour lights** are greyed out, since they only tune the shader, and **Peak brightness** acts as a ceiling the model's highlights ease into.
+- Keyboard shortcuts moved from a line at the bottom of the popup to tooltips on the controls they work.
+- The popup is a little wider and more compact.
+
+### Notes
+
+- The model is extra GPU work per frame and the Performance setting does not reduce it.
+- The GPU version of the network matches the PyTorch original in testing, but how a real trained model looks and performs on real hardware is untested in this release.
+
 ## 0.7.1 - 2026-10-02
 
 Tools for a report of heavy stutter in fullscreen only, on a system where the GPU has plenty of headroom. The cause is not confirmed; this release is for finding it.

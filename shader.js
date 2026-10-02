@@ -10,10 +10,12 @@
 // Output is extended-range Display P3 (sRGB transfer curve, values above 1.0
 // are brighter than SDR white).
 //
-// ML slot: expansionGain() in MAIN is the only part that decides "how much
-// brighter should this pixel get". To drop in a neural net later, have the net
-// write a gain map texture, bind it in MAIN, and return its sampled value from
-// expansionGain() instead of the heuristic.
+// Trained model: expansionGain() in MAIN is the hand-written answer to "how
+// much brighter should this pixel get". A model from HDR Trainer answers the
+// same question instead: it writes a small map of brightness curves (see
+// model.js), and modelGain() in MAIN reads each pixel's gain from it. MAIN can
+// use either, and split view can put any two of original, shader and model
+// side by side.
 
 const SDR2HDR_LEVELS = [[480, 270], [120, 68], [30, 17], [8, 5]];
 
@@ -148,7 +150,7 @@ struct U {
   peak: f32,        // peak brightness as a multiple of SDR white
   strength: f32,    // 0..1, how far down the tonal range expansion reaches
   sat: f32,         // colour boost (1 = none)
-  split: f32,       // 1 = left half shows the untouched SDR picture
+  split: f32,       // 1 = split view is on: draw the line
   seed: f32,        // per-frame noise seed
   splitPos: f32,    // where the split line sits, 0..1 across the video
   headroom: f32,    // brightest the display can show, as a multiple of SDR white
@@ -158,7 +160,9 @@ struct U {
   gamut: f32,       // 0..1, how far vivid colours are stretched toward the P3 edge
   vivid: f32,       // 0..1, how much coloured lights are boosted like white ones
   lite: f32,        // 1 = skip sharpening and debanding (performance)
-  p2: f32, p3: f32,
+  left: f32,        // what's shown left of the split line: 0 = the original, 1 = shader, 2 = trained model
+  right: f32,       // the same for the right of the line (and for the whole picture when split view is off)
+  fit: vec2f,       // share of the model's 16:9 frame the video covers, across and down (model.js)
 };
 @group(0) @binding(0) var<uniform> u: U;
 @group(0) @binding(1) var samp: sampler;
@@ -168,6 +172,7 @@ struct U {
 @group(0) @binding(5) var l3: texture_2d<f32>;
 @group(0) @binding(6) var l4: texture_2d<f32>;
 @group(0) @binding(7) var sceneTex: texture_2d<f32>;
+@group(0) @binding(8) var curves: texture_2d<f32>;   // the model's brightness curves (model.js)
 
 @vertex
 fn vs(@builtin(vertex_index) i: u32) -> VOut {
@@ -219,6 +224,39 @@ fn expansionGain(d: f32, coverage: f32, scene: f32) -> f32 {
   let sceneScale = mix(1.0, 0.6, smoothstep(0.10, 0.45, scene));
   let areaScale = mix(1.0, 0.45 - 0.1 * u.soften, coverage);
   return 1.0 + (u.peak - 1.0) * sceneScale * areaScale * t;
+}
+
+// The trained model's answer. Its map holds, at each spot, log2 of the gain
+// for pixels of four brightness levels (0.4, 0.7, 0.9 and 1.0, linear). A
+// pixel reads the curve at its position at its own brightness: flat below the
+// first level, straight lines between. "Brightness" here is the same half
+// luminance, half max-channel mix the model was trained with.
+//
+// The model's map is of a 16:9 frame, in which a video of another shape sits
+// with bars; u.fit turns a position in the video into one in that frame.
+fn modelGain(uv: vec2f, lin: vec3f) -> f32 {
+  let c = textureSampleLevel(curves, samp, (uv - 0.5) * u.fit + 0.5, 0.0);
+  let d = drive(lin);
+  let g = c.r
+    + (c.g - c.r) * clamp((d - 0.4) / 0.3, 0.0, 1.0)
+    + (c.b - c.g) * clamp((d - 0.7) / 0.2, 0.0, 1.0)
+    + (c.a - c.b) * clamp((d - 0.9) / 0.1, 0.0, 1.0);
+  return exp2(g);
+}
+
+// Roll-off for the model. The model isn't bound by the Peak slider, so here
+// Peak (or the display's maximum, if lower) is a ceiling: highlights ease
+// into it instead of clipping flat.
+fn rollOffModel(c: vec3f) -> vec3f {
+  let h = min(u.headroom, u.peak);
+  let knee = 0.75 * h;
+  let m = maxc(c);
+  if (m <= knee) { return c; }
+  let a = h - knee;
+  let b = max(3.0 * h, 12.0) - knee;
+  let t = clamp((m - knee) / b, 0.0, 1.0);
+  let m2 = knee + a * (1.0 - pow(1.0 - t, b / a));
+  return c * (m2 / m);
 }
 
 // Highlight roll-off. If the pipeline can produce values brighter than the
@@ -332,7 +370,6 @@ fn fs(in: VOut) -> @location(0) vec4f {
   // brightness. Weighted by coverage so isolated sparkles are untouched, and
   // by the pixel's own clipped-ness so real detail is untouched.
   let shape = 1.0 + 0.8 * u.soften * clipped(lin) * coverage * (clipDepth(in.uv) - 0.5);
-  // Never let the shaping push a highlight below plain SDR white.
   let skin = skinMask(smoothed);
 
   // Coloured lights. Plain luminance rates a pure red or blue as dim, so a
@@ -342,7 +379,15 @@ fn fs(in: VOut) -> @location(0) vec4f {
   // is boosted as much as a white one. Skin is kept on the original mix.
   let lean = mix(0.5, 1.0, u.vivid * (1.0 - skin));
   let bright = mix(luma709(lin), maxc(lin), lean);
-  let gain = max(1.0, expansionGain(bright, coverage, scene) * shape);
+  // The max() never lets the shaping push a highlight below plain SDR white.
+  var gain = max(1.0, expansionGain(bright, coverage, scene) * shape);
+  // Which picture this pixel shows: split view can put a different one on
+  // each side of the line.
+  let side = select(u.right, u.left, u.split > 0.5 && in.uv.x < u.splitPos);
+  let useModel = side > 1.5;
+  // The model reads the picture without the dither added above: its curves
+  // are steep near white, where that noise would show as grain.
+  if (useModel) { gain = modelGain(in.uv, toLinear(clamp(smoothed, vec3f(0.0), vec3f(1.0)))); }
 
   // Wide colour. Converting Rec.709 to P3 exactly leaves every colour where
   // it was, well inside what a P3 display can show. For vivid colours, blend
@@ -360,13 +405,12 @@ fn fs(in: VOut) -> @location(0) vec4f {
   // tones get almost none of it, so faces don't go orange.
   let sat = 1.0 + (u.sat - 1.0) * (1.0 - 0.9 * skin);
   let yh = lumaP3(hdr);
-  hdr = rollOff(max(mix(vec3f(yh), hdr, sat), vec3f(0.0)));
+  hdr = max(mix(vec3f(yh), hdr, sat), vec3f(0.0));
+  if (useModel) { hdr = rollOffModel(hdr); } else { hdr = rollOff(hdr); }
 
   var outc = hdr;
-  if (u.split > 0.5) {
-    if (in.uv.x < u.splitPos) { outc = max(TO_P3 * toLinear(enc), vec3f(0.0)); }
-    if (abs(in.uv.x - u.splitPos) < 0.0012) { outc = vec3f(1.0); }
-  }
+  if (side < 0.5) { outc = max(TO_P3 * toLinear(enc), vec3f(0.0)); }
+  if (u.split > 0.5 && abs(in.uv.x - u.splitPos) < 0.0012) { outc = vec3f(1.0); }
   return vec4f(toEncoded(outc), 1.0);
 }
 `;

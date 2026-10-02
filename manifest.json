@@ -1,7 +1,7 @@
 {
   "manifest_version": 3,
   "name": "SDR to HDR Video",
-  "version": "0.7.1",
+  "version": "0.8.4",
   "description": "Real-time SDR to HDR video conversion on your GPU using WebGPU.",
   "minimum_chrome_version": "129",
   "icons": {
@@ -43,6 +43,12 @@
         "default": "Alt+Shift+S"
       },
       "description": "Turn split view on or off"
+    },
+    "toggle-method": {
+      "suggested_key": {
+        "default": "Alt+Shift+M"
+      },
+      "description": "Switch between the shader and the trained model"
     }
   },
   "content_scripts": [
@@ -52,6 +58,7 @@
       ],
       "js": [
         "shader.js",
+        "model.js",
         "content.js"
       ],
       "all_frames": true,

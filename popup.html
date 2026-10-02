@@ -4,14 +4,14 @@
 <meta charset="utf-8">
 <link rel="stylesheet" href="ui.css">
 <style>
-  body { width: 324px; padding: 10px; overflow-x: hidden; }
+  body { width: 344px; padding: 10px; overflow-x: hidden; }
   .b1 { width: 190px; height: 190px; left: -60px; top: -50px; background: var(--lavender); }
   .b2 { width: 170px; height: 170px; right: -60px; top: 120px; background: var(--pink); }
   .b3 { width: 180px; height: 180px; left: -40px; top: 330px; background: var(--sky); }
   .b4 { width: 150px; height: 150px; right: -30px; top: 470px; background: var(--mint); }
 
-  main { position: relative; z-index: 1; display: flex; flex-direction: column; gap: 8px; }
-  .card { padding: 8px 13px; }
+  main { position: relative; z-index: 1; display: flex; flex-direction: column; gap: 6px; }
+  .card { padding: 6px 13px; }
 
   .head { display: flex; align-items: center; gap: 10px; padding: 9px 13px 9px 10px; }
   .logo {
@@ -41,8 +41,9 @@
   .slider label { display: flex; justify-content: space-between; align-items: baseline; margin-bottom: 1px; }
   .val { font-size: 11.5px; font-weight: 600; color: var(--ink-soft); font-variant-numeric: tabular-nums; }
 
-  .keys { display: flex; flex-wrap: wrap; gap: 4px 10px; margin: 4px 0 2px; font-size: 11px; color: var(--ink-soft); }
-  .keys span { white-space: nowrap; }
+  .row .end { display: flex; align-items: center; gap: 8px; }
+  .tight .row { min-height: 26px; }
+  .slider.unused { opacity: .42; }
 </style>
 </head>
 <body>
@@ -109,12 +110,36 @@
       </div>
     </section>
 
-    <section class="card">
+    <section class="card tight">
       <div class="row plain"><span id="headroomText"></span><button class="btn" id="calibrate">Calibrate</button></div>
+      <div class="row plain" id="methodRow"><span>Method</span>
+        <span class="end">
+          <select id="method">
+            <option value="shader">Shader</option>
+            <option value="model">Your model</option>
+          </select>
+          <button class="btn" id="modelBtn" title="Load, replace or remove a model made with HDR Trainer">Load</button>
+        </span>
+      </div>
+      <div class="row plain" id="splitLabel"><span>Split</span>
+        <span class="end">
+          <select id="splitLeft" aria-label="Left side of the split" title="What the left side of the split shows">
+            <option value="original">Original</option>
+            <option value="shader">Shader</option>
+            <option value="model">Model</option>
+          </select>
+          <select id="splitRight" aria-label="Right side of the split" title="What the right side of the split shows">
+            <option value="original">Original</option>
+            <option value="shader">Shader</option>
+            <option value="model">Model</option>
+          </select>
+          <input type="checkbox" class="sw" id="split" aria-label="Split view">
+        </span>
+      </div>
       <div class="row plain two">
-        <label title="Split view: original on the left, HDR on the right. Drag the line on the video to move it."><span>Split</span><input type="checkbox" class="sw" id="split"></label>
         <label title="The small HDR badge in the corner of converted videos"><span>Badge</span><input type="checkbox" class="sw" id="badge"></label>
         <label title="Stats on video: shows live numbers in the badge (frames per second, frames dropped, the longest gap between frames, the size drawn at and the frame timing), so they can be read in fullscreen. For tracking down stutter."><span>Stats</span><input type="checkbox" class="sw" id="stats"></label>
+        <button class="btn quiet" id="copyReport" title="Copies a diagnostic report for this tab: every video on the page and why it is or isn't being converted, a history of what the extension did, and timings for the last few minutes, plus your GPU and settings. Paste it into a bug report. It includes the site's name but not the page address.">Report</button>
       </div>
       <label class="row" title="Auto lowers the render resolution if frames are being dropped. Fastest renders at 1080p and skips sharpening and debanding."><span>Performance</span>
         <select id="perf">
@@ -129,7 +154,6 @@
           <option value="screen">Every screen refresh</option>
         </select>
       </label>
-      <div class="keys" id="keys"></div>
     </section>
   </main>
 

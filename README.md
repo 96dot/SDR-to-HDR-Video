@@ -1,6 +1,6 @@
 # SDR to HDR Video
 
-A Chromium extension that converts ordinary (SDR) web video to HDR in real time on your GPU. It is a hand-tuned inverse tone mapper written as WebGPU shaders: no machine learning, no driver hooks, and nothing leaves your machine.
+A Chromium extension that converts ordinary (SDR) web video to HDR in real time on your GPU. It is a hand-tuned inverse tone mapper written as WebGPU shaders, with no driver hooks, and nothing leaves your machine. Optionally, a small model you train yourself on your own HDR movies can take over the brightness decisions.
 
 It is in the same spirit as Nvidia's RTX Video HDR, but works on any GPU that supports WebGPU. It was built and tuned on an AMD Radeon RX 9070 XT.
 
@@ -54,6 +54,32 @@ If your monitor does its own tone mapping, the cross may never vanish completely
 
 **Reset** restores the picture defaults.
 
+### Using a trained model
+
+The shader decides how bright each part of the picture gets with hand-written rules. A model trained with HDR Trainer (a separate program) can make that decision instead, from what it learned comparing real HDR movies with their SDR versions.
+
+1. In HDR Trainer, click **Export model**. It writes `hdr-trainer/workspace/export/hdr-model.json`.
+2. In the popup, click **Load** next to **Method**, then **Choose model file** and pick that file.
+3. The extension switches to the model straight away. Videos already playing pick it up within a second, and the badge reads **HDR · MODEL**.
+
+To load a newer export, do the same again; it replaces the old one. **Remove model** on that page goes back to shader only.
+
+Comparing the two:
+
+- **Method** in the popup switches between **Shader** and **Your model**. **Alt+Shift+M** does the same from the keyboard, which is the quickest way to flip back and forth on the same scene.
+- **Split** shows two pictures at once, one each side of a line you can drag. Its two menus pick what each side shows: **Original**, **Shader** or **Model**. Set them to Shader and Model to put the two methods side by side, or to Original and Model to see the model against the untouched video.
+
+What changes while the model is in use:
+
+- **Reach**, **Shaping** and **Colour lights** do nothing. They tune the shader's own brightness rules, so they are greyed out whenever the shader isn't on screen.
+- **Peak brightness** becomes a ceiling. The model isn't limited by it, so its highlights ease into Peak, or into your display's calibrated maximum if that is lower.
+- Colour boost, Wide colour, Sharpness, debanding and everything else work as before.
+- The model can make parts of the picture darker than the original as well as brighter. The shader never darkens.
+
+How good it looks depends entirely on the model. One trained on a single movie will be rough; that is expected.
+
+The model runs once per video frame on a small copy of the picture, as GPU compute shaders. It is extra work on top of the shader, and the **Performance** setting does not reduce it. If video stutters with the model on and not with the shader, the GPU can't fit it in.
+
 ### Per-site settings
 
 When the popup is opened on a web page it shows that site's hostname with two switches:
@@ -84,9 +110,18 @@ It does not work on DRM-protected video; nothing does.
 - **Frame timing**: when the picture is redrawn.
   - *Each video frame* (default) draws once when the browser reports a new video frame. It is the least work.
   - *Every screen refresh* draws on every refresh of your display, whether or not the video has a new frame, so the overlay updates at one steady rhythm. It is there for stutter that only shows up in fullscreen, particularly with FreeSync or G-Sync on. It costs more GPU: on a 144 Hz display a 30 fps video is drawn almost five times as often. Whether it helps on a given setup is something to try; see Troubleshooting.
-- **Split**: split view. Shows the original on the left and the HDR result on the right. Drag the line on the video to move it.
+- **Method**: what decides the brightness, the built-in **Shader** or **Your model**. See "Using a trained model". The button next to it loads, replaces or removes a model.
+- **Split**: split view. The switch turns it on; the two menus choose what is shown left and right of the line: **Original** (the untouched video), **Shader** or **Model** (needs a loaded model). Any pairing works, for example Original and Shader, Shader and Model, or Model and Original. Drag the line on the video to move it. Changing **Method** also puts the new method on the right-hand side, so the split keeps comparing against what you are using until you choose otherwise.
 - **Badge**: shows or hides the HDR badge.
 - **Stats**: turns the badge into a live readout that stays visible, so it can be read in fullscreen where the popup can't be opened. For example `HDR · 60 fps · 0% dropped · longest gap 18 ms · 3440x1440 · video timing`: new video frames drawn per second, the share of the video's frames that were never drawn, the longest wait between two frames, the size drawn at, and the frame timing in use. The numbers refresh about every three seconds and read "measuring" until the first clean stretch of playback.
+
+- **Report**: copies a diagnostic report for the current tab to the clipboard, for pasting into a bug report. It is recorded all the time, so you can click it after a problem has happened. Nothing is sent anywhere; it only goes to your clipboard. It holds:
+  - your browser, screen, settings and the site's name (not the page address), and whether the extension, HDR and WebGPU are available on that page;
+  - every video on the page, with its size and state, and either "CONVERTING" or the reason it is not being converted (too small, already HDR, DRM, unreadable, no frame yet, extension off, and so on);
+  - for each video being converted, one line for every three seconds of the last few minutes: frames drawn, frames dropped, the longest gap, how late the page was told about frames, how long drawing took, how long the GPU took, how busy the page was (two measures: time stuck in long tasks, and how late a regular timer ran), and what the video was doing (buffering, changing quality);
+  - a history of what the extension did on that page: videos found, conversions started and stopped and why, errors, quality changes. The last 150 entries are kept, until the page is reloaded.
+
+  If the extension didn't engage on a video, click **Report** while you are still on that page, before reloading.
 
 ### Keyboard shortcuts
 
@@ -94,6 +129,7 @@ It does not work on DRM-protected video; nothing does.
 |---|---|
 | Alt+Shift+H | Turn HDR conversion on or off |
 | Alt+Shift+S | Turn split view on or off |
+| Alt+Shift+M | Switch between the shader and your trained model |
 
 Chrome may not assign these automatically when an unpacked extension is reloaded. Set or change them at `chrome://extensions/shortcuts`.
 
@@ -109,7 +145,7 @@ Chrome may not assign these automatically when an unpacked extension is reloaded
 
 For each eligible `<video>`, the extension places a canvas exactly over it and redraws that canvas on every video frame. The canvas is a 16-bit float WebGPU surface in Display P3 with extended tone mapping, which is what lets pixel values above 1.0 show up brighter than SDR white.
 
-Each frame goes through six shader passes:
+With the shader method, each frame goes through six shader passes:
 
 1. **Analyse.** The frame is shrunk to 480x270, recording brightness, which pixels are highlights, and which are clipped (blown out).
 2. **Shrink, three times,** down to 8x5. These small copies tell the main pass what the neighbourhood around each pixel looks like at several scales.
@@ -131,9 +167,13 @@ To keep GPU cost down it never draws the picture with more pixels than the video
 
 The extension also keeps its background work light while a video plays: looking for new video players happens in the browser's idle time, and the check for an HDR stream happens every few seconds.
 
-### Where a neural net would go
+### How the trained model fits in
 
-There is no ML in this extension. If you want to add some, `expansionGain()` in `shader.js` is the one function that decides how much brighter each pixel gets. A small network that outputs a per-pixel gain map can replace it: write the map to a texture in its own pass, bind it in the main pass, and return the sampled value from `expansionGain()`.
+`expansionGain()` in `shader.js` is the one function that decides how much brighter each pixel gets. With a model loaded and selected, that decision comes from the model instead, and the rest of the main pass is unchanged.
+
+The model is a small convolutional network (about 52,000 weights). Each video frame is shrunk to 480x270 and run through it in eleven compute-shader passes (`model.js`). The network's picture is always 16:9; a video of another shape sits in it with black bars, unstretched, which is how the trainer showed it such films. It does not output a picture. It outputs a 120x68 map of brightness curves: at each spot, four numbers giving the gain for pixels of four brightness levels. The main pass reads each pixel's gain from the curve at its position, so the per-pixel cost is one extra texture read.
+
+The curves are eased over about a tenth of a second so the picture doesn't flicker from frame to frame; where they change a lot at once, as at a scene cut, the new value is used straight away.
 
 ## Known limitations
 
@@ -149,13 +189,17 @@ There is no ML in this extension. If you want to add some, `expansionGain()` in 
 | Problem | Likely cause |
 |---|---|
 | Video stutters | Open the popup while it plays. The line under the title shows the frame rate and the share of frames dropped; hover it for the render size and which GPU is in use. Try **Performance: Fastest**. On a laptop with two GPUs, Chrome on Windows uses one for everything, usually the integrated one: set Chrome to "High performance" in Windows graphics settings, or enable `chrome://flags/#force-high-performance-gpu`, and restart it. If the status line says "busy page", lowering quality made no difference: the page itself is keeping the extension from drawing on time, and a lower video resolution is the remaining option. |
-| Stutter only in fullscreen | Switch on **Stats** and read the badge in fullscreen. If it shows frames being dropped or a long gap, the extension is falling behind there: try **Performance: Fastest**. If it shows 0% dropped and a gap close to one frame (17 ms at 60 fps, 42 ms at 24 fps), the extension is drawing every frame on time and the stutter comes from how the browser and display present them. Try **Frame timing: Every screen refresh**; if you use FreeSync or G-Sync, also try turning it off for your browser. This case is not fully understood yet, so reports with the stats line are welcome. |
+| Stutter only in fullscreen | Switch on **Stats** and read the badge in fullscreen. If it shows frames being dropped or a long gap, the extension is falling behind there: try **Performance: Fastest**. If it shows 0% dropped and a gap close to one frame (17 ms at 60 fps, 42 ms at 24 fps), the extension is drawing every frame on time and the stutter comes from how the browser and display present them. Try **Frame timing: Every screen refresh**; if you use FreeSync or G-Sync, also try turning it off for your browser. This case is not fully understood yet: after it has happened, click **Report** in the popup and paste the result into a bug report. |
 | The popup says a video is locked | Switch on **Unlock locked videos** for that site. If it then says the video couldn't be unlocked, that site's server refuses, and the video can't be converted. |
-| No HDR badge appears | HDR is off in your OS display settings, the video is DRM-protected or already HDR, or the extension is off for this site. The popup's status line reports a missing HDR display or WebGPU. |
+| The popup says the extension isn't running on this page | The page was already open when the extension was installed, updated or reloaded. Refresh the page. (A few pages, such as the Chrome Web Store, never allow extensions.) |
+| No HDR badge appears | HDR is off in your OS display settings, the video is DRM-protected or already HDR, or the extension is off for this site. The popup's status line reports a missing HDR display or WebGPU. To find out which, click **Report** in the popup while on that page: the copied text names the reason for each video. |
 | Picture looks washed out or far too bright | **Peak brightness** is above what your display can show and it hasn't been calibrated. Run **Calibrate**. |
 | Faces look orange | Lower **Colour boost**. |
 | Colours look neon or cartoonish | Lower **Wide colour** and **Colour lights**. |
 | Halos or crunchy edges | Lower **Sharpness**, especially on low-bitrate video. |
+| Stutter only with the model on | The model is extra GPU work on every video frame, and Performance doesn't reduce it. Switch **Method** back to **Shader**. |
+| "Your model" can't be selected | No model is loaded. Click **Load** next to Method. |
+| The model page rejects the file | Choose `hdr-model.json` from HDR Trainer's `workspace/export` folder. A message about a newer trainer means the extension needs updating. |
 | Shortcuts do nothing | Assign them at `chrome://extensions/shortcuts`. |
 | Overlay is misaligned on one site | The site positions its video unusually. Use **Turn off here** for that site. |
 
@@ -165,7 +209,7 @@ Messages from the extension appear in the page's DevTools console, prefixed `[SD
 
 - **Access to all sites**: the content script has to run on any page that might contain a video.
 - **declarativeNetRequest**: used only by **Unlock locked videos**, and only on sites where you switch that on, to add the response headers that let a video be read.
-- **storage**: saves your settings locally. Nothing is synced or sent anywhere.
+- **storage**: saves your settings, and a trained model if you load one, locally. Nothing is synced or sent anywhere.
 - **activeTab**: lets the popup read the current tab's hostname for per-site settings.
 
 The extension makes no network requests.
@@ -176,7 +220,9 @@ The extension makes no network requests.
 |---|---|
 | `manifest.json` | Extension manifest (Manifest V3). |
 | `content.js` | Finds videos, manages the overlay canvas, badge and split handle, and runs the render loop. |
-| `shader.js` | All WGSL shader code. |
+| `shader.js` | The WGSL code for the shader pipeline. |
+| `model.js` | Checks a trained model file and runs it on the GPU. |
+| `model.html`, `model-page.js` | The page for loading or removing a trained model. |
 | `background.js` | Handles the keyboard shortcuts, and the header rules for unlocking videos. |
 | `popup.html`, `popup.js` | The settings popup. |
 | `calibrate.html`, `calibrate.js` | The display calibration page. |
@@ -188,6 +234,8 @@ The extension makes no network requests.
 ## Testing status
 
 The pipeline was verified numerically in headless Chromium with software rendering: synthetic test frames in, measured pixel values out, for every feature. It has been used on a real HDR display with an RX 9070 XT, but picture tuning on real footage is by eye and limited to that one setup. Other GPUs and displays may need different settings.
+
+The trained-model path was checked the same way: fed a real video frame, the GPU version of the network gives the same numbers as the PyTorch original (to within 0.000001) on a random model; models with known answers produce the expected brightness on screen, including at the right place in the picture for a video that isn't 16:9. Failures were also injected on purpose (while starting, while drawing, and unreadable frames) to check that conversion recovers. How a real trained model looks, and how fast it runs on real hardware, had not been checked when this was written.
 
 ## License
 

@@ -2,6 +2,7 @@ const DEFAULTS = {
   enabled: true, peak: 4, strength: 0.5, sat: 1.15, soften: 0.5, sharpen: 0.35, gamut: 0.5, vivid: 0.5,
   perf: 'auto', timing: 'video',
   split: false, splitPos: 0.5, badge: true, stats: false,
+  method: 'shader', splitLeft: 'original', splitRight: 'shader', modelInfo: null,
   headroom: 0, sites: {},
 };
 const PICTURE = ['peak', 'strength', 'soften', 'sat', 'gamut', 'vivid', 'sharpen'];
@@ -41,7 +42,26 @@ function paint(k, v) {
 
 function show() {
   $('enabled').checked = state.enabled;
+  // Split view: a switch, and a menu for what each side of the line shows.
+  const hasModel = !!state.modelInfo;
   $('split').checked = state.split;
+  for (const k of ['splitLeft', 'splitRight']) {
+    $(k).querySelector('[value=model]').disabled = !hasModel;
+    $(k).value = state[k] === 'model' && !hasModel ? 'shader' : state[k];
+  }
+  $('method').value = hasModel && state.method === 'model' ? 'model' : 'shader';
+  $('method').querySelector('[value=model]').disabled = !hasModel;
+  $('modelBtn').textContent = hasModel ? 'Change' : 'Load';
+  $('methodRow').title = hasModel
+    ? `What decides how bright each part of the picture gets: the built-in shader, or your trained model (${describeModel(state.modelInfo)}).`
+    : 'What decides how bright each part of the picture gets. Click Load to add a model made with HDR Trainer.';
+  // These three shape the shader's own brightness decisions, so they do
+  // nothing while the model is making them.
+  const shown = state.split ? [state.splitLeft, state.splitRight] : [state.method];
+  const modelOnly = hasModel && shown.includes('model') && !shown.includes('shader');
+  for (const k of ['strength', 'soften', 'vivid']) {
+    $(k).closest('.slider').classList.toggle('unused', modelOnly);
+  }
   $('badge').checked = state.badge;
   $('stats').checked = state.stats;
   $('perf').value = state.perf;
@@ -68,7 +88,7 @@ function show() {
     : 'Display max: not calibrated';
 }
 
-for (const k of ['enabled', 'split', 'badge', 'stats']) {
+for (const k of ['enabled', 'badge', 'stats', 'split']) {
   $(k).addEventListener('change', (e) => {
     state[k] = e.target.checked;
     chrome.storage.local.set({ [k]: state[k] });
@@ -88,12 +108,44 @@ for (const k of PICTURE) {
   });
 }
 
+function describeModel(m) {
+  const bits = [];
+  if (m.steps != null) bits.push(`${m.steps.toLocaleString()} training steps`);
+  if (m.movies != null) bits.push(`${m.movies} movie${m.movies === 1 ? '' : 's'}`);
+  if (m.exported) bits.push(`exported ${m.exported}`);
+  return bits.join(', ') || 'loaded';
+}
+
+// Choosing what a side shows also turns split view on: that's why you chose.
+for (const k of ['splitLeft', 'splitRight']) {
+  $(k).addEventListener('change', (e) => {
+    state[k] = e.target.value;
+    state.split = true;
+    chrome.storage.local.set({ [k]: state[k], split: true });
+    show();
+  });
+}
+$('split').addEventListener('change', show);
+
+$('modelBtn').addEventListener('click', () => {
+  chrome.tabs.create({ url: chrome.runtime.getURL('model.html') });
+});
+
 for (const k of ['perf', 'timing']) {
   $(k).addEventListener('change', (e) => {
     state[k] = e.target.value;
     chrome.storage.local.set({ [k]: state[k] });
   });
 }
+
+// Changing the method also puts it on the right of the split, so the split
+// keeps showing "the original against what I'm using" unless you set it up
+// differently afterwards.
+$('method').addEventListener('change', (e) => {
+  state.method = state.splitRight = e.target.value;
+  chrome.storage.local.set({ method: state.method, splitRight: state.splitRight });
+  show();
+});
 
 $('siteOff').addEventListener('change', (e) => {
   const cfg = { ...siteCfg() };
@@ -133,22 +185,37 @@ $('reset').addEventListener('click', () => {
   show();
 });
 
+// Copy a diagnostic report for the video on this tab to the clipboard.
+$('copyReport').addEventListener('click', async () => {
+  const btn = $('copyReport');
+  let r = null;
+  try { r = await chrome.tabs.sendMessage(tabId, { type: 'sdr2hdr-report' }); } catch {}
+  let label = 'No reply';     // nothing on the page answered: see the status line at the top
+  if (r && r.text) {
+    try { await navigator.clipboard.writeText(r.text); label = 'Copied'; } catch { label = 'Failed'; }
+  }
+  btn.textContent = label;
+  setTimeout(() => { btn.textContent = 'Report'; }, 1800);
+});
+
 $('calibrate').addEventListener('click', () => {
   chrome.tabs.create({ url: chrome.runtime.getURL('calibrate.html') });
 });
 
+// Keyboard shortcuts are shown as tooltips on the controls they work.
 chrome.commands.getAll((cmds) => {
-  const label = { 'toggle-hdr': 'HDR on/off', 'toggle-split': 'split view' };
-  const box = $('keys');
+  const where = { 'toggle-hdr': 'enabled', 'toggle-split': 'splitLabel', 'toggle-method': 'method' };
+  const intro = {
+    'toggle-hdr': 'Turn HDR conversion on or off.',
+    'toggle-split': 'Split view: a different picture on each side of a line. Pick the two sides with the menus, and drag the line on the video to move it.',
+    'toggle-method': 'Switch between the shader and your trained model.',
+  };
   for (const c of cmds) {
-    if (!label[c.name]) continue;
-    const item = document.createElement('span');
-    const key = document.createElement('kbd');
-    key.textContent = c.shortcut || 'not set';
-    item.append(key, ` ${label[c.name]}`);
-    box.append(item);
+    if (!where[c.name]) continue;
+    const el = $(where[c.name]);
+    if (c.name === 'toggle-method') { el.title = `${intro[c.name]} Shortcut: ${c.shortcut || 'not set'}.`; continue; }
+    el.title = `${intro[c.name]} Shortcut: ${c.shortcut || 'not set'} (change it at chrome://extensions/shortcuts).`;
   }
-  box.title = 'Change shortcuts at chrome://extensions/shortcuts';
 });
 
 const problems = [];
@@ -163,9 +230,22 @@ $('status').classList.toggle('bad', problems.length > 0);
 let tabId = null;
 async function pollStats() {
   if (tabId == null || problems.length) return;
-  let s = null;
-  try { s = await chrome.tabs.sendMessage(tabId, { type: 'sdr2hdr-stats' }); } catch {}
-  if (!s) { $('statusText').textContent = 'HDR display detected'; $('status').classList.remove('bad'); return; }
+  let s = null, absent = false;
+  try {
+    s = await chrome.tabs.sendMessage(tabId, { type: 'sdr2hdr-stats' });
+  } catch (e) {
+    // Nothing on the page is listening: the extension's script isn't in it.
+    absent = /Receiving end does not exist/i.test(String(e && e.message));
+  }
+  if (absent && site) {
+    // The usual reason: the page was already open when the extension was
+    // installed, updated or reloaded. (A few pages never allow extensions.)
+    $('statusText').textContent = "The extension isn't running on this page. Refresh the page to start it.";
+    $('status').title = 'Pages that were already open when the extension was installed, updated or reloaded need a refresh. A few pages, such as the Chrome Web Store, never allow extensions.';
+    $('status').classList.add('bad');
+    return;
+  }
+  if (!s) { $('statusText').textContent = 'HDR display detected'; $('status').title = ''; $('status').classList.remove('bad'); return; }
   if (s.locked) {
     $('statusText').textContent = s.unlock
       ? "A video here is locked and couldn't be unlocked."
@@ -177,6 +257,10 @@ async function pollStats() {
   // "1080p" style label: the short side for an upright video, else the height.
   const p = ([w, h]) => `${h > w ? w : h}p`;
   let text = `Converting ${p(s.video)}`;
+  const names = ['original', 'shader', 'model'];
+  if (s.split) text += `, ${names[s.sides[0]]} | ${names[s.sides[1]]}`;
+  else if (s.sides[1] === 2) text += ' with your model';
+  if (s.modelFailed) text += " (model wouldn't load)";
   if (s.drawn[0] * s.drawn[1] < s.video[0] * s.video[1] * 0.9) text += ` at ${p(s.drawn)}`;
   if (s.paused) text += ', paused';
   else if (s.fps != null) text += `, ${Math.round(s.fps)} fps, ${Math.round(s.drop * 100)}% dropped`;
