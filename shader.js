@@ -155,7 +155,9 @@ struct U {
   soften: f32,      // 0..1, how much to shape big blown-out areas
   step: vec2f,      // sharpening tap distance in uv (one source or screen pixel)
   sharpen: f32,     // 0..1
-  p0: f32,
+  gamut: f32,       // 0..1, how far vivid colours are stretched toward the P3 edge
+  vivid: f32,       // 0..1, how much coloured lights are boosted like white ones
+  p1: f32, p2: f32, p3: f32,
 };
 @group(0) @binding(0) var<uniform> u: U;
 @group(0) @binding(1) var samp: sampler;
@@ -199,13 +201,13 @@ const TO_P3 = mat3x3f(
   vec3f(0.1774, 0.9669, 0.0724),
   vec3f(0.0000, 0.0000, 0.9108));
 
-// lin:      linear pixel
+// d:        the pixel's brightness for expansion purposes, 0..1 (see fs)
 // coverage: 0 = isolated highlight (sparkle, lamp), 1 = part of a big or
 //           dense bright region (sky, white page, a line of subtitles)
 // scene:    smoothed average luminance of the whole frame
-fn expansionGain(lin: vec3f, coverage: f32, scene: f32) -> f32 {
+fn expansionGain(d: f32, coverage: f32, scene: f32) -> f32 {
   // Leave shadows, midtones and skin alone; only the top of the range expands.
-  let x = clamp((drive(lin) - 0.2) / 0.8, 0.0, 1.0);
+  let x = clamp((d - 0.2) / 0.8, 0.0, 1.0);
 
   // Dark scenes: let the expansion reach a little further down.
   let reach = clamp(u.strength + 0.15 * (1.0 - smoothstep(0.03, 0.15, scene)), 0.0, 1.0);
@@ -325,13 +327,32 @@ fn fs(in: VOut) -> @location(0) vec4f {
   // by the pixel's own clipped-ness so real detail is untouched.
   let shape = 1.0 + 0.8 * u.soften * clipped(lin) * coverage * (clipDepth(in.uv) - 0.5);
   // Never let the shaping push a highlight below plain SDR white.
-  let gain = max(1.0, expansionGain(lin, coverage, scene) * shape);
+  let skin = skinMask(smoothed);
 
-  var hdr = max(TO_P3 * lin, vec3f(0.0)) * gain;
+  // Coloured lights. Plain luminance rates a pure red or blue as dim, so a
+  // neon sign or brake light would get a fraction of the boost a white lamp
+  // does. Leaning on the brightest channel instead lets them expand too. At
+  // 0 this is the original half-and-half mix; at 1 a fully saturated light
+  // is boosted as much as a white one. Skin is kept on the original mix.
+  let lean = mix(0.5, 1.0, u.vivid * (1.0 - skin));
+  let bright = mix(luma709(lin), maxc(lin), lean);
+  let gain = max(1.0, expansionGain(bright, coverage, scene) * shape);
+
+  // Wide colour. Converting Rec.709 to P3 exactly leaves every colour where
+  // it was, well inside what a P3 display can show. For vivid colours, blend
+  // toward reading the same numbers as P3 directly, which slides them out
+  // toward the P3 edge: at full strength a pure Rec.709 red becomes a pure
+  // P3 red. Greys are identical either way, muted colours are left alone,
+  // and skin is excluded.
+  let s8 = clamp(smoothed, vec3f(0.0), vec3f(1.0));
+  let vividness = (maxc(s8) - min(s8.r, min(s8.g, s8.b))) / max(maxc(s8), 0.0001);
+  let stretch = u.gamut * smoothstep(0.3, 0.8, vividness) * (1.0 - skin);
+
+  var hdr = max(mix(TO_P3 * lin, lin, stretch), vec3f(0.0)) * gain;
 
   // Colour boost, done in P3 so it can push past the Rec.709 gamut. Skin
   // tones get almost none of it, so faces don't go orange.
-  let sat = 1.0 + (u.sat - 1.0) * (1.0 - 0.9 * skinMask(smoothed));
+  let sat = 1.0 + (u.sat - 1.0) * (1.0 - 0.9 * skin);
   let yh = lumaP3(hdr);
   hdr = rollOff(max(mix(vec3f(yh), hdr, sat), vec3f(0.0)));
 

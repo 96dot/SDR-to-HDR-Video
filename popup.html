@@ -29,6 +29,8 @@
   .row.plain { cursor: default; }
 
   .slider { padding: 3px 0 2px; }
+  .pair { display: grid; grid-template-columns: 1fr 1fr; column-gap: 16px; }
+  .pair .slider { min-width: 0; }
   .slider label { display: flex; justify-content: space-between; align-items: baseline; margin-bottom: 1px; }
   .val { font-size: 11.5px; font-weight: 600; color: var(--ink-soft); font-variant-numeric: tabular-nums; }
 
@@ -69,21 +71,31 @@
         <label for="peak"><span>Peak brightness</span><span class="val" id="peakVal"></span></label>
         <input type="range" id="peak" min="1.5" max="12" step="0.5">
       </div>
-      <div class="slider">
-        <label for="strength"><span>Highlight reach</span><span class="val" id="strengthVal"></span></label>
-        <input type="range" id="strength" min="0" max="1" step="0.05">
-      </div>
-      <div class="slider">
-        <label for="soften"><span>Highlight shaping</span><span class="val" id="softenVal"></span></label>
-        <input type="range" id="soften" min="0" max="1" step="0.05">
-      </div>
-      <div class="slider">
-        <label for="sat"><span>Colour boost</span><span class="val" id="satVal"></span></label>
-        <input type="range" id="sat" min="1" max="1.5" step="0.05">
-      </div>
-      <div class="slider">
-        <label for="sharpen"><span>Sharpness</span><span class="val" id="sharpenVal"></span></label>
-        <input type="range" id="sharpen" min="0" max="1" step="0.05">
+      <div class="pair">
+        <div class="slider" title="How far down the tonal range the brightening extends">
+          <label for="strength"><span>Reach</span><span class="val" id="strengthVal"></span></label>
+          <input type="range" id="strength" min="0" max="1" step="0.05">
+        </div>
+        <div class="slider" title="Gives big blown-out areas a gradient instead of a flat patch">
+          <label for="soften"><span>Shaping</span><span class="val" id="softenVal"></span></label>
+          <input type="range" id="soften" min="0" max="1" step="0.05">
+        </div>
+        <div class="slider" title="Extra saturation; skin tones are mostly left alone">
+          <label for="sat"><span>Colour boost</span><span class="val" id="satVal"></span></label>
+          <input type="range" id="sat" min="1" max="1.5" step="0.05">
+        </div>
+        <div class="slider" title="Stretches vivid colours out toward the edge of the wider P3 gamut">
+          <label for="gamut"><span>Wide colour</span><span class="val" id="gamutVal"></span></label>
+          <input type="range" id="gamut" min="0" max="1" step="0.05">
+        </div>
+        <div class="slider" title="Lets coloured lights (neon, brake lights, fire) get boosted like white ones">
+          <label for="vivid"><span>Colour lights</span><span class="val" id="vividVal"></span></label>
+          <input type="range" id="vivid" min="0" max="1" step="0.05">
+        </div>
+        <div class="slider" title="Contrast-adaptive sharpening">
+          <label for="sharpen"><span>Sharpness</span><span class="val" id="sharpenVal"></span></label>
+          <input type="range" id="sharpen" min="0" max="1" step="0.05">
+        </div>
       </div>
     </section>
 

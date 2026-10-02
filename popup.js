@@ -1,9 +1,9 @@
 const DEFAULTS = {
-  enabled: true, peak: 4, strength: 0.5, sat: 1.15, soften: 0.5, sharpen: 0.35,
+  enabled: true, peak: 4, strength: 0.5, sat: 1.15, soften: 0.5, sharpen: 0.35, gamut: 0.5, vivid: 0.5,
   split: false, splitPos: 0.5, badge: true,
   headroom: 0, sites: {},
 };
-const PICTURE = ['peak', 'strength', 'soften', 'sat', 'sharpen'];
+const PICTURE = ['peak', 'strength', 'soften', 'sat', 'gamut', 'vivid', 'sharpen'];
 const $ = (id) => document.getElementById(id);
 
 const pct = (v) => `${Math.round(v * 100)}%`;
@@ -12,6 +12,8 @@ const fmt = {
   strength: pct,
   soften: (v) => (v > 0 ? pct(v) : 'Off'),
   sat: (v) => (v > 1 ? `+${Math.round((v - 1) * 100)}%` : 'Off'),
+  gamut: (v) => (v > 0 ? pct(v) : 'Off'),
+  vivid: (v) => (v > 0 ? pct(v) : 'Off'),
   sharpen: (v) => (v > 0 ? pct(v) : 'Off'),
 };
 

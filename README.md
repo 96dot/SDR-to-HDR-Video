@@ -45,9 +45,11 @@ If your monitor does its own tone mapping, the cross may never vanish completely
 | Slider | Range | Default | What it does |
 |---|---|---|---|
 | Peak brightness | 1.5x to 12x | 4x | How bright the brightest highlights get, as a multiple of normal SDR white. |
-| Highlight reach | 0 to 100% | 50% | How far down the tonal range the brightening extends. Higher lifts more of the picture. |
-| Highlight shaping | Off to 100% | 50% | Gives big blown-out areas a gradient (dimmer rim, brighter middle) so they look like light instead of a flat patch. |
+| Reach | 0 to 100% | 50% | How far down the tonal range the brightening extends. Higher lifts more of the picture. |
+| Shaping | Off to 100% | 50% | Gives big blown-out areas a gradient (dimmer rim, brighter middle) so they look like light instead of a flat patch. |
 | Colour boost | Off to +50% | +15% | Extra saturation, reaching into the wider Display P3 gamut. Skin tones are mostly excluded. |
+| Wide colour | Off to 100% | 50% | Stretches already-vivid colours out toward the edge of the P3 gamut. Muted colours, greys and skin stay put. |
+| Colour lights | Off to 100% | 50% | Lets coloured highlights (neon, brake lights, fire) get a brightness boost closer to what white ones get. |
 | Sharpness | Off to 100% | 35% | Contrast-adaptive sharpening. |
 
 **Reset** restores the picture defaults.
@@ -98,6 +100,7 @@ Each frame goes through six shader passes:
    - debands, filling in the in-between shades that 8-bit video can't store, so smooth gradients don't show steps once stretched;
    - expands brightness. Shadows, midtones and skin are left alone; only the top of the range is pushed up. Small isolated highlights get the full peak, large bright areas get less than half, and bright scenes get less than dark ones;
    - shapes blown-out areas with a rim-to-centre gradient;
+   - widens colour: vivid colours are stretched toward the P3 edge, and coloured lights get more of the brightness boost;
    - boosts colour, skipping skin tones;
    - rolls off anything brighter than the display can show.
 
@@ -108,7 +111,7 @@ There is no ML in this extension. If you want to add some, `expansionGain()` in 
 ## Known limitations
 
 - **Bright text baked into the video** (burned-in subtitles, logos) is toned down but still brighter than ideal. Captions drawn by the site itself, such as YouTube's, are not affected.
-- **White-background content** such as screen recordings may show a visible gradient near the edges of white areas. Lower **Highlight shaping** or turn it off for that site.
+- **White-background content** such as screen recordings may show a visible gradient near the edges of white areas. Lower **Shaping** or turn it off for that site.
 - **Skin protection is by colour**, so wood, sand and other skin-coloured things also miss out on the colour boost.
 - **Blown-out detail stays lost.** The extension shapes clipped areas but cannot recover what was in them.
 - **Native fullscreen.** When a site fullscreens the bare video element with the browser's built-in controls, the bottom strip of the picture shows the unconverted video while those controls are visible.
@@ -121,6 +124,7 @@ There is no ML in this extension. If you want to add some, `expansionGain()` in 
 | No HDR badge appears | HDR is off in your OS display settings, the video is DRM-protected or already HDR, or the extension is off for this site. The popup's status line reports a missing HDR display or WebGPU. |
 | Picture looks washed out or far too bright | **Peak brightness** is above what your display can show and it hasn't been calibrated. Run **Calibrate**. |
 | Faces look orange | Lower **Colour boost**. |
+| Colours look neon or cartoonish | Lower **Wide colour** and **Colour lights**. |
 | Halos or crunchy edges | Lower **Sharpness**, especially on low-bitrate video. |
 | Shortcuts do nothing | Assign them at `chrome://extensions/shortcuts`. |
 | Overlay is misaligned on one site | The site positions its video unusually. Use **Turn off here** for that site. |

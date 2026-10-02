@@ -5,7 +5,7 @@
   if (window.__sdr2hdrLoaded) return;
   window.__sdr2hdrLoaded = true;
 
-  const DEFAULTS = { enabled: true, peak: 4, strength: 0.5, sat: 1.15, soften: 0.5, sharpen: 0.35,
+  const DEFAULTS = { enabled: true, peak: 4, strength: 0.5, sat: 1.15, soften: 0.5, sharpen: 0.35, gamut: 0.5, vivid: 0.5,
     split: false, splitPos: 0.5, badge: true,
     headroom: 0,   // display maximum from the calibration page; 0 = not calibrated
     sites: {},     // per-site overrides, keyed by hostname
@@ -212,7 +212,7 @@
       this.sv = views.slice(n);
       this.si = 0;              // which scene texture holds the current value
 
-      this.udata = new Float32Array(16);
+      this.udata = new Float32Array(20);
       this.sdata = new Float32Array(4);
       const ub = (data) => device.createBuffer({
         size: data.byteLength,
@@ -405,6 +405,8 @@
       u[12] = Math.max(u[2], 1 / (this.canvas.width * this.scale[0]));
       u[13] = Math.max(u[3], 1 / (this.canvas.height * this.scale[1]));
       u[14] = settings.sharpen;
+      u[15] = settings.gamut;
+      u[16] = settings.vivid;
       device.queue.writeBuffer(this.ubuf, 0, u);
 
       const enc = device.createCommandEncoder();
@@ -511,7 +513,7 @@
     const site = (stored.sites && stored.sites[SITE]) || {};
     settings = { ...stored };
     if (site.custom) {
-      for (const k of ['peak', 'strength', 'sat', 'soften', 'sharpen']) if (typeof site[k] === 'number') settings[k] = site[k];
+      for (const k of ['peak', 'strength', 'sat', 'soften', 'sharpen', 'gamut', 'vivid']) if (typeof site[k] === 'number') settings[k] = site[k];
     }
     siteOff = !!site.off;
     scan();

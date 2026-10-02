@@ -1,7 +1,7 @@
 {
   "manifest_version": 3,
   "name": "SDR to HDR Video",
-  "version": "0.5.1",
+  "version": "0.6.0",
   "description": "Real-time SDR to HDR video conversion on your GPU using WebGPU.",
   "minimum_chrome_version": "129",
   "icons": {
