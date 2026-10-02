@@ -2,6 +2,35 @@
 
 All notable changes to SDR to HDR Video. Versions follow the number in `manifest.json`.
 
+## 0.7.1 - 2026-10-02
+
+Tools for a report of heavy stutter in fullscreen only, on a system where the GPU has plenty of headroom. The cause is not confirmed; this release is for finding it.
+
+### Added
+
+- **Stats** switch in the popup. The HDR badge becomes a live readout that stays visible in fullscreen: frames drawn per second, share of frames dropped, the longest gap between two frames, the size drawn at and the frame timing in use.
+- **Frame timing** setting: *Each video frame* (the default, and how it has always worked) or *Every screen refresh*. The second draws on every refresh of the display so the overlay updates at one steady rhythm, as an experiment for fullscreen stutter with FreeSync or G-Sync. It uses more GPU.
+- The popup's status tooltip now includes the longest gap between frames and the frame timing.
+
+### Changed
+
+- **Split view**, **HDR badge** and the new **Stats** share one row in the popup, labelled Split, Badge and Stats.
+
+## 0.7.0 - 2026-10-02
+
+### Added
+
+- **Unlock locked videos**, a per-site switch in the popup. Some sites serve their video from another server that doesn't permit it to be read, so the browser blocks the extension from converting it. Switching this on adds the missing permission to video that site loads and reloads the video, keeping your place. It is off by default, because it also lets the site's own scripts read that video. If a video won't load that way it is put back as it was.
+- The popup now says when a video on the page is locked, instead of showing nothing.
+
+### Changed
+
+- New permission: `declarativeNetRequest`, used only for the switch above and only on sites where it is on.
+
+### Fixed
+
+- A video that couldn't be read left a dead entry behind, which the popup's status line then reported as a video being converted.
+
 ## 0.6.1 - 2026-10-02
 
 A performance release, prompted by a report of stutter on 4K YouTube video.

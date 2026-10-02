@@ -69,6 +69,7 @@
         <label><span>Turn off here</span><input type="checkbox" class="sw" id="siteOff"></label>
         <label title="Give this site its own copy of the picture sliders"><span>Own settings</span><input type="checkbox" class="sw" id="siteCustom"></label>
       </div>
+      <label class="row" title="Some sites serve video from another server that doesn't allow it to be read, so the extension can't convert it. This adds the missing permission to video this site loads, and reloads the video. Only switch it on for sites you trust: it also lets the site's own scripts read that video."><span>Unlock locked videos</span><input type="checkbox" class="sw" id="siteUnlock"></label>
     </section>
 
     <section class="card">
@@ -110,13 +111,22 @@
 
     <section class="card">
       <div class="row plain"><span id="headroomText"></span><button class="btn" id="calibrate">Calibrate</button></div>
-      <label class="row"><span>Split view <span style="color:var(--ink-soft)">(drag the line)</span></span><input type="checkbox" class="sw" id="split"></label>
-      <label class="row"><span>HDR badge on videos</span><input type="checkbox" class="sw" id="badge"></label>
+      <div class="row plain two">
+        <label title="Split view: original on the left, HDR on the right. Drag the line on the video to move it."><span>Split</span><input type="checkbox" class="sw" id="split"></label>
+        <label title="The small HDR badge in the corner of converted videos"><span>Badge</span><input type="checkbox" class="sw" id="badge"></label>
+        <label title="Stats on video: shows live numbers in the badge (frames per second, frames dropped, the longest gap between frames, the size drawn at and the frame timing), so they can be read in fullscreen. For tracking down stutter."><span>Stats</span><input type="checkbox" class="sw" id="stats"></label>
+      </div>
       <label class="row" title="Auto lowers the render resolution if frames are being dropped. Fastest renders at 1080p and skips sharpening and debanding."><span>Performance</span>
         <select id="perf">
           <option value="auto">Auto</option>
           <option value="best">Best quality</option>
           <option value="fast">Fastest</option>
+        </select>
+      </label>
+      <label class="row" title="When the picture is redrawn. Each video frame is the least work. Every screen refresh keeps drawing at one steady rhythm, which can help if video stutters in fullscreen, especially with FreeSync or G-Sync; it works the GPU harder."><span>Frame timing</span>
+        <select id="timing">
+          <option value="video">Each video frame</option>
+          <option value="screen">Every screen refresh</option>
         </select>
       </label>
       <div class="keys" id="keys"></div>

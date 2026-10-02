@@ -7,7 +7,9 @@
 
   const DEFAULTS = { enabled: true, peak: 4, strength: 0.5, sat: 1.15, soften: 0.5, sharpen: 0.35, gamut: 0.5, vivid: 0.5,
     perf: 'auto',  // 'auto', 'best' or 'fast'
+    timing: 'video',   // when to draw: 'video' = once per video frame, 'screen' = on every screen refresh
     split: false, splitPos: 0.5, badge: true,
+    stats: false,  // show live numbers in the badge, for diagnosing stutter
     headroom: 0,   // display maximum from the calibration page; 0 = not calibrated
     sites: {},     // per-site overrides, keyed by hostname
   };
@@ -37,11 +39,14 @@
   let stored = { ...DEFAULTS };     // exactly what's in storage
   let settings = { ...DEFAULTS };   // stored + this site's overrides
   let siteOff = false;
+  let siteUnlock = false;          // this site's "unlock locked videos" switch
   let lastPointer = 0;
   let gpuPromise = null;
   let gpuFailed = false;
   const sessions = new Map();      // video -> Session
   const blocked = new WeakMap();   // video -> currentSrc we refused to process
+  const locked = new Set();        // videos the browser won't let us read (see tryUnlock)
+  const unlockTried = new WeakMap();   // video -> currentSrc we've already tried to unlock
   const hdrDisplay = matchMedia('(dynamic-range: high)');
 
   const log = (...a) => console.info('[SDR to HDR]', ...a);
@@ -162,6 +167,7 @@
     const text = document.createElement('span');
     text.textContent = 'HDR';
     el.append(svg, text);
+    el.label = text;
     return el;
   }
 
@@ -202,7 +208,10 @@
       this.needsDraw = false;   // canvas was resized and hasn't been redrawn at the new size yet
       this.resetAuto();
       this.lastPresented = null;  // the browser's running count of frames presented
-      this.win = { t0: performance.now(), rendered: 0, p0: 0, q0: 0, dirty: true };   // first window is warm-up
+      this.win = { t0: performance.now(), rendered: 0, gap: 0, p0: 0, q0: 0, dirty: true };   // first window is warm-up
+      this.frameAt = 0;         // when the last new video frame was drawn
+      this.fresh = false;       // screen timing: a new video frame is waiting to be drawn
+      this.raf = 0;
       this.stats = null;
       this.top = false;         // true while living in the top layer (see setTopLayer)
       this.pop = null;
@@ -277,17 +286,54 @@
       for (const e of this.disturbances) video.addEventListener(e, this.onDisturb);
       document.addEventListener('visibilitychange', this.onDisturb);
 
+      // Two ways to time the drawing (the "Frame timing" setting).
+      // 'video': draw when the browser says a new video frame is up. Least
+      // work, but the canvas then updates at the video's rhythm, a beat after
+      // the video itself.
+      // 'screen': draw on every screen refresh, new frame or not, so the
+      // canvas updates at one steady rhythm. The video-frame callback then
+      // only notes that a new frame has arrived.
       this.onFrame = (now, meta) => {
         if (this.dead) return;
-        this.render();
-        this.win.rendered++;
         if (meta) this.lastPresented = meta.presentedFrames;
+        if (settings.timing === 'screen') {
+          this.fresh = true;
+        } else {
+          this.render();
+          this.countFrame();
+        }
         if (!this.dead) this.video.requestVideoFrameCallback(this.onFrame);
+      };
+      this.onTick = () => {
+        this.raf = 0;
+        if (this.dead || settings.timing !== 'screen') return;
+        // A paused video is only redrawn when it shows a new frame (a seek).
+        if (!this.video.paused || this.fresh) {
+          this.render();
+          if (this.fresh) { this.fresh = false; this.countFrame(); }
+        }
+        if (!this.dead) this.raf = requestAnimationFrame(this.onTick);
       };
 
       this.layout();
       this.render();
       if (!this.dead) video.requestVideoFrameCallback(this.onFrame);
+      this.syncLoop();
+    }
+
+    // Start the every-refresh loop if the setting asks for it. It stops by
+    // itself when the setting changes back.
+    syncLoop() {
+      if (!this.dead && settings.timing === 'screen' && !this.raf) this.raf = requestAnimationFrame(this.onTick);
+    }
+
+    // A new video frame has just been drawn: count it, and keep the longest
+    // wait between two of them.
+    countFrame() {
+      const t = performance.now(), w = this.win;
+      w.rendered++;
+      if (this.frameAt) w.gap = Math.max(w.gap, t - this.frameAt);
+      this.frameAt = t;
     }
 
     // Auto-quality state, started afresh for every new video.
@@ -355,12 +401,13 @@
       // nothing about performance, so it's thrown away. So is anything played
       // faster than normal speed, where skipping frames is expected.
       const clean = !w.dirty && !v.paused && !v.seeking && !document.hidden && v.playbackRate <= 1;
-      this.win = { t0: t, rendered: 0, p0: presented, q0: decoded, dirty: false };
+      this.win = { t0: t, rendered: 0, gap: 0, p0: presented, q0: decoded, dirty: false };
       if (!clean || expected < 30) return;
 
       const drop = 1 - w.rendered / expected;
       const fps = w.rendered / ((t - w.t0) / 1000);
-      this.stats = { fps, drop };
+      this.stats = { fps, drop, gap: w.gap };
+      if (settings.stats) this.updateBadge();
       if (settings.perf !== 'auto' || this.autoDone || !this.box || t < this.holdUntil) return;
 
       // Two bad windows in a row, so a one-off hitch doesn't cost quality for
@@ -393,15 +440,40 @@
       }
     }
 
+    // What the badge says. With "Stats on video" on it carries live numbers,
+    // so they can be read in fullscreen, where the popup can't be opened:
+    // new video frames drawn per second, the share of the video's frames that
+    // were never drawn, the longest wait between two frames, the size drawn
+    // at, and the frame timing in use.
+    badgeText() {
+      if (!settings.stats) return 'HDR';
+      const st = this.stats, c = this.canvas;
+      const parts = ['HDR'];
+      if (st) {
+        parts.push(`${Math.round(st.fps)} fps`, `${Math.round(st.drop * 100)}% dropped`, `longest gap ${Math.round(st.gap)} ms`);
+      } else {
+        parts.push(this.video.paused ? 'paused' : 'measuring');
+      }
+      parts.push(`${c.width}x${c.height}`, settings.timing === 'screen' ? 'screen timing' : 'video timing');
+      return parts.join(' \u00b7 ');
+    }
+
     updateBadge() {
-      this.badge.style.display = settings.badge ? 'flex' : 'none';
-      this.badge.style.opacity = this.badgeDim ? '.4' : '.95';
+      const b = this.badge, stats = settings.stats;
+      b.style.display = settings.badge || stats ? 'flex' : 'none';
+      // With stats on, the badge stays readable instead of fading.
+      const dim = this.badgeDim && !stats;
+      b.style.opacity = dim ? '.4' : '.95';
+      b.style.background = stats ? 'rgba(24,18,44,.78)' : 'rgba(40,32,70,.38)';
+      b.style.letterSpacing = stats ? '.02em' : '.08em';
       // The frosted-glass blur makes the browser re-filter what's behind the
       // badge on every video frame. Once the badge has faded it's barely
       // visible anyway, so drop it for the rest of playback.
-      const glass = this.badgeDim ? 'none' : 'blur(10px) saturate(1.4)';
-      this.badge.style.backdropFilter = glass;
-      this.badge.style.webkitBackdropFilter = glass;
+      const glass = this.badgeDim || stats ? 'none' : 'blur(10px) saturate(1.4)';
+      b.style.backdropFilter = glass;
+      b.style.webkitBackdropFilter = glass;
+      const text = this.badgeText();
+      if (b.label.textContent !== text) b.label.textContent = text;
       this.knob.style.display = settings.split ? 'flex' : 'none';
     }
 
@@ -526,6 +598,10 @@
         // Cross-origin video without CORS, or protected content.
         log('cannot read this video:', e.message);
         this.block();
+        if (e.name === 'SecurityError') {
+          locked.add(v);
+          if (siteUnlock) tryUnlock(v);
+        }
         return;
       }
 
@@ -594,6 +670,7 @@
       if (this.dead) return;
       this.dead = true;
       clearTimeout(this.badgeTimer);
+      if (this.raf) cancelAnimationFrame(this.raf);
       this.ro.disconnect();
       this.video.removeEventListener('loadedmetadata', this.onMeta);
       this.video.removeEventListener('seeked', this.onSeek);
@@ -609,6 +686,56 @@
       if (this.pop) this.pop.remove();
       sessions.delete(this.video);
     }
+  }
+
+  // A video file served from another site, without that site's say-so, can be
+  // played but not read: the browser marks it "tainted". The say-so is a pair
+  // of response headers. When the user has switched on unlocking for this
+  // site, the background script adds those headers to media this page loads,
+  // and the video is reloaded in the mode that asks for them. Position, speed
+  // and play state are carried across the reload. If the video won't load that
+  // way, it's put back exactly as it was.
+  async function tryUnlock(v) {
+    const src = v.currentSrc;
+    if (!v.isConnected || !src || unlockTried.get(v) === src) return;
+    unlockTried.set(v, src);
+
+    let reply = null;
+    try { reply = await chrome.runtime.sendMessage({ type: 'sdr2hdr-unlock' }); } catch (e) { reply = { error: e.message }; }
+    if (!reply || !reply.ok) { log('could not unlock this video:', reply && reply.error); return; }
+
+    const was = { time: v.currentTime, paused: v.paused, rate: v.playbackRate, attr: v.getAttribute('crossorigin') };
+    const resume = () => {
+      try { v.currentTime = was.time; } catch {}
+      v.playbackRate = was.rate;
+      if (!was.paused) v.play().catch(() => {});
+    };
+    let timer = 0;
+    const done = () => {
+      clearTimeout(timer);
+      v.removeEventListener('loadedmetadata', onLoaded);
+      v.removeEventListener('error', onError, true);
+    };
+    const onLoaded = () => {
+      done();
+      resume();
+      blocked.delete(v);
+      locked.delete(v);
+      log('video unlocked');
+      scan();
+    };
+    const onError = () => {
+      done();
+      log('this video will not load in readable mode; putting it back as it was');
+      if (was.attr == null) v.removeAttribute('crossorigin'); else v.setAttribute('crossorigin', was.attr);
+      v.addEventListener('loadedmetadata', resume, { once: true });
+      v.load();
+    };
+    v.addEventListener('loadedmetadata', onLoaded);
+    v.addEventListener('error', onError, true);     // capture: errors on <source> children don't bubble
+    timer = setTimeout(onError, 15000);
+    v.crossOrigin = 'use-credentials';              // keep cookies, so logged-in video still loads
+    v.load();
   }
 
   const isActive = () => settings.enabled && !siteOff && hdrDisplay.matches && !gpuFailed;
@@ -673,6 +800,7 @@
   function scan() {
     const active = isActive();
     for (const [v, s] of [...sessions]) {
+      if (s.dead) { sessions.delete(v); continue; }
       if (!active || !v.isConnected || !eligible(v) || isHdrSource(v)) { s.destroy(); continue; }
       s.layout();
       s.perfTick();
@@ -689,7 +817,11 @@
       if (sessions.has(v) || !eligible(v) || v.readyState < 2 || isHdrSource(v)) continue;
       getGpu().then((gpu) => {
         if (sessions.has(v) || !isActive() || !v.isConnected || !eligible(v) || isHdrSource(v)) return;
-        sessions.set(v, new Session(v, gpu));
+        // The first draw happens inside the constructor. If the video turns
+        // out to be unreadable it gives up there and then, so only keep a
+        // session that survived it.
+        const s = new Session(v, gpu);
+        if (!s.dead) sessions.set(v, s);
       }).catch(() => {});
     }
   }
@@ -702,11 +834,15 @@
       for (const k of ['peak', 'strength', 'sat', 'soften', 'sharpen', 'gamut', 'vivid']) if (typeof site[k] === 'number') settings[k] = site[k];
     }
     siteOff = !!site.off;
+    const unlockWas = siteUnlock;
+    siteUnlock = !!site.unlock;
+    if (siteUnlock && !unlockWas) for (const v of [...locked]) tryUnlock(v);
     scan();
     for (const s of sessions.values()) {
       s.updateBadge();
       s.layout();
       s.render();   // repaint paused videos too
+      s.syncLoop();
     }
   }
 
@@ -757,7 +893,14 @@
   // The popup asks for live numbers on the video being converted.
   if (chrome.runtime && chrome.runtime.onMessage) {
     chrome.runtime.onMessage.addListener((msg, sender, respond) => {
-      if (!msg || msg.type !== 'sdr2hdr-stats' || !sessions.size) return;
+      if (!msg || msg.type !== 'sdr2hdr-stats') return;
+      if (!sessions.size) {
+        // Nothing being converted. If that's because a video here is locked,
+        // say so, so the popup can point at the unlock switch.
+        for (const v of [...locked]) if (!v.isConnected) locked.delete(v);
+        if (locked.size) respond({ locked: true, unlock: siteUnlock });
+        return;
+      }
       const s = [...sessions.values()].sort((a, b) => b.canvas.width - a.canvas.width)[0];
       // Size the picture itself is drawn at (the canvas also covers any bars).
       const drawn = [0, 1].map((i) => Math.round([s.canvas.width, s.canvas.height][i] * Math.min(1, s.scale[i])));
@@ -766,6 +909,8 @@
         drawn,
         fps: s.stats ? s.stats.fps : null,
         drop: s.stats ? s.stats.drop : null,
+        gap: s.stats ? s.stats.gap : null,
+        timing: settings.timing,
         level: settings.perf === 'auto' ? s.level : null,
         busy: settings.perf === 'auto' && s.busy,
         lite: s.quality().lite,

@@ -59,9 +59,20 @@ If your monitor does its own tone mapping, the cross may never vanish completely
 When the popup is opened on a web page it shows that site's hostname with two switches:
 
 - **Turn off here** disables the extension on that site only.
+- **Unlock locked videos** is for sites where the popup reports a locked video; see the next section.
 - **Own settings** gives the site its own copy of the picture sliders. With it off, the sliders change the settings for all sites.
 
 Embedded players follow the page they're embedded in, not the player's own domain.
+
+### Unlocking locked videos
+
+On some sites nothing gets converted and the popup says "A video here is locked against reading". The video file is coming from a different server than the page, and that server hasn't said the page may read it. The browser will still play such a video, but refuses to hand its pixels to anything, this extension included.
+
+Switching on **Unlock locked videos** for that site adds the missing permission to video the site loads, then reloads the video so it takes effect. Your place in the video, the speed and whether it was playing are kept. If the video won't load that way, it is put back as it was and stays unconverted.
+
+What you are agreeing to when you switch it on: on that site, the page's own scripts gain the same ability to read the video that the extension gets. For a site you'd watch video on anyway that is rarely a concern, but it is why this is off by default and set per site. It affects video and audio requests made by that site's pages only, lasts until the browser is closed, and is removed as soon as you switch it off.
+
+It does not work on DRM-protected video; nothing does.
 
 ### Other
 
@@ -70,8 +81,12 @@ Embedded players follow the page they're embedded in, not the player's own domai
   - *Auto* (default) starts at full quality and steps down if it measures frames being dropped: to 1440p rendering, then to 1080p with sharpening and debanding off. Steps that would change nothing on your screen are skipped. If the lowest level drops just as many frames as full quality did, the GPU was never the problem, so it goes back to full quality and stops adjusting. It starts afresh for each new video.
   - *Best quality* always renders at your screen's resolution with everything on.
   - *Fastest* always renders at 1080p with sharpening and debanding off.
-- **Split view**: shows the original on the left and the HDR result on the right. Drag the line on the video to move it.
-- **HDR badge on videos**: shows or hides the badge.
+- **Frame timing**: when the picture is redrawn.
+  - *Each video frame* (default) draws once when the browser reports a new video frame. It is the least work.
+  - *Every screen refresh* draws on every refresh of your display, whether or not the video has a new frame, so the overlay updates at one steady rhythm. It is there for stutter that only shows up in fullscreen, particularly with FreeSync or G-Sync on. It costs more GPU: on a 144 Hz display a 30 fps video is drawn almost five times as often. Whether it helps on a given setup is something to try; see Troubleshooting.
+- **Split**: split view. Shows the original on the left and the HDR result on the right. Drag the line on the video to move it.
+- **Badge**: shows or hides the HDR badge.
+- **Stats**: turns the badge into a live readout that stays visible, so it can be read in fullscreen where the popup can't be opened. For example `HDR · 60 fps · 0% dropped · longest gap 18 ms · 3440x1440 · video timing`: new video frames drawn per second, the share of the video's frames that were never drawn, the longest wait between two frames, the size drawn at, and the frame timing in use. The numbers refresh about every three seconds and read "measuring" until the first clean stretch of playback.
 
 ### Keyboard shortcuts
 
@@ -86,7 +101,7 @@ Chrome may not assign these automatically when an unpacked extension is reloaded
 
 - **DRM-protected video** (Netflix, Disney+, Prime Video and similar). The browser does not let extensions read those frames.
 - **Video that is already HDR.** It is detected and left alone. A switch between an SDR and an HDR stream in the middle of a video can take about five seconds to notice.
-- **Cross-origin video without CORS headers.** The browser blocks reading its frames.
+- **Locked video, unless you unlock it.** Some sites serve their video from another server that doesn't permit it to be read, and the browser then blocks reading its frames. The popup says when this is the case, and **Unlock locked videos** can usually get round it; see below.
 - **Small videos** under 200 px wide, such as thumbnails and hover previews.
 - **Pages that aren't served over HTTPS**, where WebGPU is unavailable.
 
@@ -110,7 +125,7 @@ Each frame goes through six shader passes:
 
 ### Performance
 
-The extension draws each frame from the page's own scripting thread, when the browser tells it a new video frame is ready. Two things can make it miss frames: the GPU not finishing in time (4K at 60 fps is a lot of pixels), or the page being too busy to run the callback at all. A missed frame shows as a stutter, because the overlay keeps showing the previous one.
+By default the extension draws each frame from the page's own scripting thread, when the browser tells it a new video frame is ready. (With **Frame timing** set to *Every screen refresh* it draws on each display refresh instead.) Two things can make it miss frames: the GPU not finishing in time (4K at 60 fps is a lot of pixels), or the page being too busy to run the callback at all. A missed frame shows as a stutter, because the overlay keeps showing the previous one.
 
 To keep GPU cost down it never draws the picture with more pixels than the video has (unless Performance is set to Best quality), and Auto lowers the render resolution when it measures drops. The browser scales the smaller picture back up to fit.
 
@@ -134,6 +149,8 @@ There is no ML in this extension. If you want to add some, `expansionGain()` in 
 | Problem | Likely cause |
 |---|---|
 | Video stutters | Open the popup while it plays. The line under the title shows the frame rate and the share of frames dropped; hover it for the render size and which GPU is in use. Try **Performance: Fastest**. On a laptop with two GPUs, Chrome on Windows uses one for everything, usually the integrated one: set Chrome to "High performance" in Windows graphics settings, or enable `chrome://flags/#force-high-performance-gpu`, and restart it. If the status line says "busy page", lowering quality made no difference: the page itself is keeping the extension from drawing on time, and a lower video resolution is the remaining option. |
+| Stutter only in fullscreen | Switch on **Stats** and read the badge in fullscreen. If it shows frames being dropped or a long gap, the extension is falling behind there: try **Performance: Fastest**. If it shows 0% dropped and a gap close to one frame (17 ms at 60 fps, 42 ms at 24 fps), the extension is drawing every frame on time and the stutter comes from how the browser and display present them. Try **Frame timing: Every screen refresh**; if you use FreeSync or G-Sync, also try turning it off for your browser. This case is not fully understood yet, so reports with the stats line are welcome. |
+| The popup says a video is locked | Switch on **Unlock locked videos** for that site. If it then says the video couldn't be unlocked, that site's server refuses, and the video can't be converted. |
 | No HDR badge appears | HDR is off in your OS display settings, the video is DRM-protected or already HDR, or the extension is off for this site. The popup's status line reports a missing HDR display or WebGPU. |
 | Picture looks washed out or far too bright | **Peak brightness** is above what your display can show and it hasn't been calibrated. Run **Calibrate**. |
 | Faces look orange | Lower **Colour boost**. |
@@ -147,6 +164,7 @@ Messages from the extension appear in the page's DevTools console, prefixed `[SD
 ## Permissions
 
 - **Access to all sites**: the content script has to run on any page that might contain a video.
+- **declarativeNetRequest**: used only by **Unlock locked videos**, and only on sites where you switch that on, to add the response headers that let a video be read.
 - **storage**: saves your settings locally. Nothing is synced or sent anywhere.
 - **activeTab**: lets the popup read the current tab's hostname for per-site settings.
 
@@ -159,7 +177,7 @@ The extension makes no network requests.
 | `manifest.json` | Extension manifest (Manifest V3). |
 | `content.js` | Finds videos, manages the overlay canvas, badge and split handle, and runs the render loop. |
 | `shader.js` | All WGSL shader code. |
-| `background.js` | Handles the keyboard shortcuts. |
+| `background.js` | Handles the keyboard shortcuts, and the header rules for unlocking videos. |
 | `popup.html`, `popup.js` | The settings popup. |
 | `calibrate.html`, `calibrate.js` | The display calibration page. |
 | `ui.css` | Shared styling for the popup and calibration page. |

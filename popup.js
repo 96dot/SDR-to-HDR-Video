@@ -1,7 +1,7 @@
 const DEFAULTS = {
   enabled: true, peak: 4, strength: 0.5, sat: 1.15, soften: 0.5, sharpen: 0.35, gamut: 0.5, vivid: 0.5,
-  perf: 'auto',
-  split: false, splitPos: 0.5, badge: true,
+  perf: 'auto', timing: 'video',
+  split: false, splitPos: 0.5, badge: true, stats: false,
   headroom: 0, sites: {},
 };
 const PICTURE = ['peak', 'strength', 'soften', 'sat', 'gamut', 'vivid', 'sharpen'];
@@ -26,7 +26,7 @@ const isCustom = () => !!siteCfg().custom;
 
 function saveSite(cfg) {
   const sites = { ...state.sites };
-  if (cfg.off || cfg.custom) sites[site] = cfg; else delete sites[site];
+  if (cfg.off || cfg.custom || cfg.unlock) sites[site] = cfg; else delete sites[site];
   state.sites = sites;
   chrome.storage.local.set({ sites });
 }
@@ -43,7 +43,9 @@ function show() {
   $('enabled').checked = state.enabled;
   $('split').checked = state.split;
   $('badge').checked = state.badge;
+  $('stats').checked = state.stats;
   $('perf').value = state.perf;
+  $('timing').value = state.timing;
 
   $('siteBox').hidden = !site;
   if (site) {
@@ -51,6 +53,7 @@ function show() {
     $('siteName').title = site;
     $('siteOff').checked = !!siteCfg().off;
     $('siteCustom').checked = isCustom();
+    $('siteUnlock').checked = !!siteCfg().unlock;
   }
   $('pictureScope').textContent = isCustom() ? site : 'all sites';
 
@@ -65,7 +68,7 @@ function show() {
     : 'Display max: not calibrated';
 }
 
-for (const k of ['enabled', 'split', 'badge']) {
+for (const k of ['enabled', 'split', 'badge', 'stats']) {
   $(k).addEventListener('change', (e) => {
     state[k] = e.target.checked;
     chrome.storage.local.set({ [k]: state[k] });
@@ -85,14 +88,22 @@ for (const k of PICTURE) {
   });
 }
 
-$('perf').addEventListener('change', (e) => {
-  state.perf = e.target.value;
-  chrome.storage.local.set({ perf: state.perf });
-});
+for (const k of ['perf', 'timing']) {
+  $(k).addEventListener('change', (e) => {
+    state[k] = e.target.value;
+    chrome.storage.local.set({ [k]: state[k] });
+  });
+}
 
 $('siteOff').addEventListener('change', (e) => {
   const cfg = { ...siteCfg() };
   if (e.target.checked) cfg.off = true; else delete cfg.off;
+  saveSite(cfg);
+});
+
+$('siteUnlock').addEventListener('change', (e) => {
+  const cfg = { ...siteCfg() };
+  if (e.target.checked) cfg.unlock = true; else delete cfg.unlock;
   saveSite(cfg);
 });
 
@@ -155,6 +166,14 @@ async function pollStats() {
   let s = null;
   try { s = await chrome.tabs.sendMessage(tabId, { type: 'sdr2hdr-stats' }); } catch {}
   if (!s) { $('statusText').textContent = 'HDR display detected'; $('status').classList.remove('bad'); return; }
+  if (s.locked) {
+    $('statusText').textContent = s.unlock
+      ? "A video here is locked and couldn't be unlocked."
+      : 'A video here is locked against reading. Try "Unlock locked videos" below.';
+    $('status').title = 'The video comes from another server that does not allow it to be read.';
+    $('status').classList.add('bad');
+    return;
+  }
   // "1080p" style label: the short side for an upright video, else the height.
   const p = ([w, h]) => `${h > w ? w : h}p`;
   let text = `Converting ${p(s.video)}`;
@@ -165,7 +184,9 @@ async function pollStats() {
   else if (s.level) text += ' (auto-lowered)';
   $('statusText').textContent = text;
   $('status').title = `Video ${s.video.join('x')}, drawn at ${s.drawn.join('x')}` +
-    (s.lite ? ', sharpening and debanding off' : '') + `. GPU: ${s.gpu}.` +
+    (s.lite ? ', sharpening and debanding off' : '') +
+    (s.gap != null ? `. Longest gap between frames: ${Math.round(s.gap)} ms` : '') +
+    `. Drawing on every ${s.timing === 'screen' ? 'screen refresh' : 'video frame'}. GPU: ${s.gpu}.` +
     (s.busy ? ' Lowering quality did not reduce dropped frames, so the page itself is too busy; full quality was restored.' : '');
   $('status').classList.toggle('bad', !s.paused && s.drop != null && s.drop > 0.08);
 }
