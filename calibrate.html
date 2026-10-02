@@ -1,0 +1,75 @@
+<!doctype html>
+<html>
+<head>
+<meta charset="utf-8">
+<title>SDR to HDR: display calibration</title>
+<link rel="stylesheet" href="ui.css">
+<style>
+  /* This page stays black whatever the theme, on purpose: a mostly dark
+     screen stops OLED and local-dimming panels from dimming the test square,
+     which would throw the reading off. The glass panel and its pastel glow
+     are kept dim and well away from the square for the same reason. */
+  :root {
+    color-scheme: dark;
+    --glass: rgba(255, 255, 255, .06);
+    --glass-strong: rgba(255, 255, 255, .13);
+    --edge: rgba(255, 255, 255, .14);
+    --shine: rgba(255, 255, 255, .12);
+    --shadow: rgba(0, 0, 0, .5);
+    --track: rgba(255, 255, 255, .16);
+    --ink: #ece6fb;
+    --ink-soft: #b4acd2;
+    --focus: #c9b9ff;
+  }
+  html, body { height: 100%; }
+  body {
+    background: #000;
+    font-size: 14px;
+    display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 22px;
+    overflow: hidden;
+  }
+  canvas { position: relative; z-index: 1; width: 300px; height: 300px; display: block; }
+
+  .glow { position: relative; width: 440px; max-width: calc(100vw - 32px); }
+  .glow .blob { position: absolute; filter: blur(46px); opacity: .2; }
+  .g1 { width: 220px; height: 150px; left: -30px; bottom: -30px; background: var(--lavender); }
+  .g2 { width: 220px; height: 150px; right: -30px; bottom: -30px; background: var(--pink); }
+  .g3 { width: 160px; height: 110px; left: 140px; top: -10px; background: var(--sky); }
+
+  .panel { padding: 16px 18px 14px; }
+  .panel h1 { font-size: 15px; font-weight: 700; margin-bottom: 8px; }
+  ol { margin: 0 0 14px; padding-left: 20px; line-height: 1.5; color: var(--ink-soft); }
+  ol b { color: var(--ink); }
+  .row { display: flex; align-items: center; justify-content: space-between; gap: 10px; margin-top: 12px; }
+  .buttons { display: flex; gap: 8px; }
+  #val { font-size: 19px; font-weight: 700; font-variant-numeric: tabular-nums; }
+  #msg { min-height: 1.4em; margin-top: 10px; font-size: 13px; color: var(--mint); }
+  #msg.bad { color: var(--peach); }
+</style>
+</head>
+<body>
+  <canvas id="c" width="600" height="600"></canvas>
+
+  <div class="glow">
+    <div class="blob g1"></div><div class="blob g2"></div><div class="blob g3"></div>
+    <div class="card panel">
+      <h1>Find your display's brightest white</h1>
+      <ol>
+        <li>The square is as bright as your display can go. The cross inside it is dimmer.</li>
+        <li>Drag the slider right until the cross <b>just</b> disappears into the square.</li>
+        <li>Nudge it back until you can barely see the cross again, then save.</li>
+      </ol>
+      <input type="range" id="v" min="1" max="16" step="0.1" value="2" aria-label="Cross brightness">
+      <div class="row">
+        <span id="val"></span>
+        <span class="buttons">
+          <button class="btn" id="clear">Clear</button>
+          <button class="btn primary" id="save">Save</button>
+        </span>
+      </div>
+      <div id="msg" role="status"></div>
+    </div>
+  </div>
+  <script src="calibrate.js"></script>
+</body>
+</html>

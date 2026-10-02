@@ -1,0 +1,20 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 128 128" width="128" height="128">
+  <defs>
+    <linearGradient id="bg" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="#a892ee"/>
+      <stop offset="1" stop-color="#f29ac6"/>
+    </linearGradient>
+    <linearGradient id="shine" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#fff" stop-opacity=".42"/>
+      <stop offset="1" stop-color="#fff" stop-opacity="0"/>
+    </linearGradient>
+    <clipPath id="clip"><rect x="0" y="0" width="128" height="128" rx="30"/></clipPath>
+  </defs>
+  <rect x="0" y="0" width="128" height="128" rx="30" fill="url(#bg)"/>
+  <g clip-path="url(#clip)">
+    <ellipse cx="64" cy="-6" rx="96" ry="70" fill="url(#shine)"/>
+  </g>
+  <rect x="1.5" y="1.5" width="125" height="125" rx="28.5" fill="none" stroke="#fff" stroke-opacity=".55" stroke-width="3"/>
+  <g stroke="#fff" stroke-width="11" stroke-linecap="round"><line x1="98.00" y1="64.00" x2="110.00" y2="64.00"/><line x1="88.04" y1="88.04" x2="96.53" y2="96.53"/><line x1="64.00" y1="98.00" x2="64.00" y2="110.00"/><line x1="39.96" y1="88.04" x2="31.47" y2="96.53"/><line x1="30.00" y1="64.00" x2="18.00" y2="64.00"/><line x1="39.96" y1="39.96" x2="31.47" y2="31.47"/><line x1="64.00" y1="30.00" x2="64.00" y2="18.00"/><line x1="88.04" y1="39.96" x2="96.53" y2="31.47"/></g>
+  <circle cx="64" cy="64" r="21" fill="#fff"/>
+</svg>

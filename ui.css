@@ -1,0 +1,212 @@
+/* Shared look for the popup and the calibration page: pastel glassmorphism.
+   Frosted translucent cards over soft blurred colour, with a deep violet ink
+   for text so it stays readable on any of the pastels. */
+
+:root {
+  color-scheme: light dark;
+
+  /* pastels */
+  --lavender: #cdb8f7;
+  --pink: #ffc6de;
+  --peach: #ffd9bf;
+  --mint: #b8f0d8;
+  --sky: #bcdcff;
+
+  /* surfaces */
+  --page: linear-gradient(155deg, #f4edff 0%, #ffeef6 48%, #e9f5ff 100%);
+  --glass: rgba(255, 255, 255, .52);
+  --glass-strong: rgba(255, 255, 255, .78);
+  --edge: rgba(255, 255, 255, .8);
+  --shine: rgba(255, 255, 255, .9);
+  --shadow: rgba(110, 90, 170, .16);
+  --track: rgba(110, 95, 165, .18);
+  --blob-opacity: .8;
+
+  /* ink */
+  --ink: #443c63;
+  --ink-soft: #5d5583;
+  --focus: #8b74e0;
+
+  /* accent: lavender into pink */
+  --accent-a: #a892ee;
+  --accent-b: #f29ac6;
+  --accent: linear-gradient(120deg, var(--accent-a), var(--accent-b));
+
+  --ok: #58c79b;
+  --warn: #f0957f;
+}
+
+@media (prefers-color-scheme: dark) {
+  :root {
+    --page: linear-gradient(155deg, #1c1830 0%, #2a1f3e 50%, #16293a 100%);
+    --glass: rgba(255, 255, 255, .075);
+    --glass-strong: rgba(255, 255, 255, .16);
+    --edge: rgba(255, 255, 255, .16);
+    --shine: rgba(255, 255, 255, .14);
+    --shadow: rgba(0, 0, 0, .35);
+    --track: rgba(255, 255, 255, .16);
+    --blob-opacity: .34;
+    --ink: #f2edff;
+    --ink-soft: #c6bfe2;
+    --focus: #c9b9ff;
+  }
+}
+
+* { box-sizing: border-box; }
+
+body {
+  margin: 0;
+  color: var(--ink);
+  font: 13px/1.35 "Segoe UI Variable Text", "Segoe UI", system-ui, sans-serif;
+  background: var(--page);
+}
+
+/* Soft colour behind the glass, so the blur has something to frost. */
+.blob {
+  position: fixed;
+  border-radius: 50%;
+  filter: blur(34px);
+  opacity: var(--blob-opacity);
+  pointer-events: none;
+  z-index: 0;
+}
+
+.card {
+  position: relative;
+  z-index: 1;
+  background: var(--glass);
+  -webkit-backdrop-filter: blur(18px) saturate(1.5);
+  backdrop-filter: blur(18px) saturate(1.5);
+  border: 1px solid var(--edge);
+  border-radius: 18px;
+  box-shadow: 0 8px 26px var(--shadow), inset 0 1px 0 var(--shine);
+}
+
+h1, h2 { margin: 0; }
+
+.eyebrow {
+  font-size: 10.5px;
+  font-weight: 700;
+  letter-spacing: .09em;
+  text-transform: uppercase;
+  color: var(--ink-soft);
+}
+
+.chip {
+  display: inline-block;
+  max-width: 150px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  vertical-align: bottom;
+  padding: 1px 8px;
+  border-radius: 999px;
+  background: var(--glass-strong);
+  border: 1px solid var(--edge);
+  font-size: 10.5px;
+  font-weight: 600;
+  letter-spacing: 0;
+  text-transform: none;
+  color: var(--ink-soft);
+}
+
+/* Toggle switch (a restyled checkbox, so it keeps keyboard and label support). */
+input.sw {
+  appearance: none;
+  flex: none;
+  position: relative;
+  width: 38px;
+  height: 22px;
+  margin: 0;
+  border-radius: 11px;
+  background: var(--track);
+  border: 1px solid var(--edge);
+  cursor: pointer;
+  transition: background .2s;
+}
+input.sw::before {
+  content: "";
+  position: absolute;
+  top: 2px;
+  left: 2px;
+  width: 16px;
+  height: 16px;
+  border-radius: 50%;
+  background: #fff;
+  box-shadow: 0 1px 4px rgba(60, 45, 110, .35);
+  transition: transform .2s;
+}
+input.sw:checked { background: var(--accent); }
+input.sw:checked::before { transform: translateX(16px); }
+
+/* Slider. --p is the filled fraction, set from script. */
+input[type=range] {
+  appearance: none;
+  display: block;
+  width: 100%;
+  height: 18px;
+  margin: 0;
+  background: transparent;
+  cursor: pointer;
+}
+input[type=range]::-webkit-slider-runnable-track {
+  height: 6px;
+  border-radius: 3px;
+  background:
+    var(--accent) 0 / var(--p, 50%) 100% no-repeat,
+    var(--track);
+}
+input[type=range]::-webkit-slider-thumb {
+  appearance: none;
+  width: 16px;
+  height: 16px;
+  margin-top: -5px;
+  border-radius: 50%;
+  background: #fff;
+  border: 1px solid rgba(255, 255, 255, .9);
+  box-shadow: 0 2px 7px rgba(80, 60, 150, .4);
+  transition: transform .12s;
+}
+input[type=range]:active::-webkit-slider-thumb { transform: scale(1.15); }
+
+.btn {
+  font: inherit;
+  font-weight: 600;
+  color: var(--ink);
+  padding: 5px 13px;
+  border-radius: 999px;
+  background: var(--glass-strong);
+  border: 1px solid var(--edge);
+  box-shadow: 0 2px 8px var(--shadow), inset 0 1px 0 var(--shine);
+  cursor: pointer;
+  transition: transform .12s, filter .12s;
+}
+.btn:hover { filter: brightness(1.06); }
+.btn:active { transform: scale(.97); }
+.btn.primary { background: var(--accent); color: #fff; border-color: rgba(255, 255, 255, .5); text-shadow: 0 1px 2px rgba(70, 40, 120, .35); }
+.btn.quiet { background: transparent; border-color: transparent; box-shadow: none; color: var(--ink-soft); padding: 2px 6px; font-weight: 600; }
+.btn.quiet:hover { background: var(--glass-strong); }
+
+input.sw:focus-visible,
+input[type=range]:focus-visible,
+.btn:focus-visible {
+  outline: 2px solid var(--focus);
+  outline-offset: 2px;
+}
+
+kbd {
+  display: inline-block;
+  padding: 1px 6px;
+  border-radius: 6px;
+  background: var(--glass-strong);
+  border: 1px solid var(--edge);
+  font: 600 10.5px/1.5 "Segoe UI", system-ui, sans-serif;
+  color: var(--ink);
+  white-space: nowrap;
+}
+
+[hidden] { display: none !important; }
+
+@media (prefers-reduced-motion: reduce) {
+  * { transition: none !important; }
+}
