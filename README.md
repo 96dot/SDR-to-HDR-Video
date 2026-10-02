@@ -59,13 +59,17 @@ If your monitor does its own tone mapping, the cross may never vanish completely
 When the popup is opened on a web page it shows that site's hostname with two switches:
 
 - **Turn off here** disables the extension on that site only.
-- **Separate picture settings** gives the site its own copy of the picture sliders. With it off, the sliders change the settings for all sites.
+- **Own settings** gives the site its own copy of the picture sliders. With it off, the sliders change the settings for all sites.
 
 Embedded players follow the page they're embedded in, not the player's own domain.
 
 ### Other
 
 - **Enabled** (top-right switch): master on/off for all sites.
+- **Performance**: how hard the extension works your GPU.
+  - *Auto* (default) starts at full quality and steps down if it measures frames being dropped: to 1440p rendering, then to 1080p with sharpening and debanding off. Steps that would change nothing on your screen are skipped. If the lowest level drops just as many frames as full quality did, the GPU was never the problem, so it goes back to full quality and stops adjusting. It starts afresh for each new video.
+  - *Best quality* always renders at your screen's resolution with everything on.
+  - *Fastest* always renders at 1080p with sharpening and debanding off.
 - **Split view**: shows the original on the left and the HDR result on the right. Drag the line on the video to move it.
 - **HDR badge on videos**: shows or hides the badge.
 
@@ -81,7 +85,7 @@ Chrome may not assign these automatically when an unpacked extension is reloaded
 ## What it won't convert
 
 - **DRM-protected video** (Netflix, Disney+, Prime Video and similar). The browser does not let extensions read those frames.
-- **Video that is already HDR.** It is detected and left alone.
+- **Video that is already HDR.** It is detected and left alone. A switch between an SDR and an HDR stream in the middle of a video can take about five seconds to notice.
 - **Cross-origin video without CORS headers.** The browser blocks reading its frames.
 - **Small videos** under 200 px wide, such as thumbnails and hover previews.
 - **Pages that aren't served over HTTPS**, where WebGPU is unavailable.
@@ -104,6 +108,14 @@ Each frame goes through six shader passes:
    - boosts colour, skipping skin tones;
    - rolls off anything brighter than the display can show.
 
+### Performance
+
+The extension draws each frame from the page's own scripting thread, when the browser tells it a new video frame is ready. Two things can make it miss frames: the GPU not finishing in time (4K at 60 fps is a lot of pixels), or the page being too busy to run the callback at all. A missed frame shows as a stutter, because the overlay keeps showing the previous one.
+
+To keep GPU cost down it never draws the picture with more pixels than the video has (unless Performance is set to Best quality), and Auto lowers the render resolution when it measures drops. The browser scales the smaller picture back up to fit.
+
+The extension also keeps its background work light while a video plays: looking for new video players happens in the browser's idle time, and the check for an HDR stream happens every few seconds.
+
 ### Where a neural net would go
 
 There is no ML in this extension. If you want to add some, `expansionGain()` in `shader.js` is the one function that decides how much brighter each pixel gets. A small network that outputs a per-pixel gain map can replace it: write the map to a texture in its own pass, bind it in the main pass, and return the sampled value from `expansionGain()`.
@@ -121,6 +133,7 @@ There is no ML in this extension. If you want to add some, `expansionGain()` in 
 
 | Problem | Likely cause |
 |---|---|
+| Video stutters | Open the popup while it plays. The line under the title shows the frame rate and the share of frames dropped; hover it for the render size and which GPU is in use. Try **Performance: Fastest**. On a laptop with two GPUs, Chrome on Windows uses one for everything, usually the integrated one: set Chrome to "High performance" in Windows graphics settings, or enable `chrome://flags/#force-high-performance-gpu`, and restart it. If the status line says "busy page", lowering quality made no difference: the page itself is keeping the extension from drawing on time, and a lower video resolution is the remaining option. |
 | No HDR badge appears | HDR is off in your OS display settings, the video is DRM-protected or already HDR, or the extension is off for this site. The popup's status line reports a missing HDR display or WebGPU. |
 | Picture looks washed out or far too bright | **Peak brightness** is above what your display can show and it hasn't been calibrated. Run **Calibrate**. |
 | Faces look orange | Lower **Colour boost**. |
@@ -151,6 +164,7 @@ The extension makes no network requests.
 | `calibrate.html`, `calibrate.js` | The display calibration page. |
 | `ui.css` | Shared styling for the popup and calibration page. |
 | `icons/` | Extension icons, with their SVG sources. |
+| `CHANGELOG.md` | What changed in each version. |
 | `docs/` | Screenshots used in this README. |
 
 ## Testing status

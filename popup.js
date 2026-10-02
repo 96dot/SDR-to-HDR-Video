@@ -1,5 +1,6 @@
 const DEFAULTS = {
   enabled: true, peak: 4, strength: 0.5, sat: 1.15, soften: 0.5, sharpen: 0.35, gamut: 0.5, vivid: 0.5,
+  perf: 'auto',
   split: false, splitPos: 0.5, badge: true,
   headroom: 0, sites: {},
 };
@@ -42,6 +43,7 @@ function show() {
   $('enabled').checked = state.enabled;
   $('split').checked = state.split;
   $('badge').checked = state.badge;
+  $('perf').value = state.perf;
 
   $('siteBox').hidden = !site;
   if (site) {
@@ -82,6 +84,11 @@ for (const k of PICTURE) {
     }
   });
 }
+
+$('perf').addEventListener('change', (e) => {
+  state.perf = e.target.value;
+  chrome.storage.local.set({ perf: state.perf });
+});
 
 $('siteOff').addEventListener('change', (e) => {
   const cfg = { ...siteCfg() };
@@ -141,10 +148,35 @@ if (!matchMedia('(dynamic-range: high)').matches) {
 $('statusText').textContent = problems.length ? problems.join(' ') : 'HDR display detected';
 $('status').classList.toggle('bad', problems.length > 0);
 
+// While the popup is open, show live numbers for the video on this tab.
+let tabId = null;
+async function pollStats() {
+  if (tabId == null || problems.length) return;
+  let s = null;
+  try { s = await chrome.tabs.sendMessage(tabId, { type: 'sdr2hdr-stats' }); } catch {}
+  if (!s) { $('statusText').textContent = 'HDR display detected'; $('status').classList.remove('bad'); return; }
+  // "1080p" style label: the short side for an upright video, else the height.
+  const p = ([w, h]) => `${h > w ? w : h}p`;
+  let text = `Converting ${p(s.video)}`;
+  if (s.drawn[0] * s.drawn[1] < s.video[0] * s.video[1] * 0.9) text += ` at ${p(s.drawn)}`;
+  if (s.paused) text += ', paused';
+  else if (s.fps != null) text += `, ${Math.round(s.fps)} fps, ${Math.round(s.drop * 100)}% dropped`;
+  if (s.busy) text += ' (busy page)';
+  else if (s.level) text += ' (auto-lowered)';
+  $('statusText').textContent = text;
+  $('status').title = `Video ${s.video.join('x')}, drawn at ${s.drawn.join('x')}` +
+    (s.lite ? ', sharpening and debanding off' : '') + `. GPU: ${s.gpu}.` +
+    (s.busy ? ' Lowering quality did not reduce dropped frames, so the page itself is too busy; full quality was restored.' : '');
+  $('status').classList.toggle('bad', !s.paused && s.drop != null && s.drop > 0.08);
+}
+setInterval(pollStats, 1000);
+
 // Load settings and work out which site the popup was opened on.
 chrome.storage.local.get(DEFAULTS, (s) => {
   state = s;
   chrome.tabs.query({ active: true, currentWindow: true }, (tabs) => {
+    tabId = tabs[0] ? tabs[0].id : null;
+    pollStats();
     try {
       const u = new URL(tabs[0].url);
       if (u.protocol === 'http:' || u.protocol === 'https:') site = u.hostname;

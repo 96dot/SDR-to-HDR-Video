@@ -27,6 +27,13 @@
   .cardhead { display: flex; align-items: center; justify-content: space-between; gap: 8px; margin-bottom: 4px; min-height: 20px; }
   .row { display: flex; align-items: center; justify-content: space-between; gap: 10px; min-height: 28px; margin: 0; cursor: pointer; }
   .row.plain { cursor: default; }
+  .row.two { gap: 14px; }
+  .row.two label { display: flex; align-items: center; justify-content: space-between; gap: 8px; flex: 1; min-width: 0; margin: 0; cursor: pointer; }
+  select {
+    font: inherit; font-weight: 600; color: var(--ink); padding: 3px 8px; border-radius: 999px;
+    background: var(--glass-strong); border: 1px solid var(--edge); cursor: pointer;
+  }
+  select:focus-visible { outline: 2px solid var(--focus); outline-offset: 2px; }
 
   .slider { padding: 3px 0 2px; }
   .pair { display: grid; grid-template-columns: 1fr 1fr; column-gap: 16px; }
@@ -58,8 +65,10 @@
 
     <section class="card" id="siteBox" hidden>
       <div class="cardhead"><h2 class="eyebrow">This site</h2><span class="chip" id="siteName"></span></div>
-      <label class="row"><span>Turn off here</span><input type="checkbox" class="sw" id="siteOff"></label>
-      <label class="row"><span>Separate picture settings</span><input type="checkbox" class="sw" id="siteCustom"></label>
+      <div class="row plain two">
+        <label><span>Turn off here</span><input type="checkbox" class="sw" id="siteOff"></label>
+        <label title="Give this site its own copy of the picture sliders"><span>Own settings</span><input type="checkbox" class="sw" id="siteCustom"></label>
+      </div>
     </section>
 
     <section class="card">
@@ -103,6 +112,13 @@
       <div class="row plain"><span id="headroomText"></span><button class="btn" id="calibrate">Calibrate</button></div>
       <label class="row"><span>Split view <span style="color:var(--ink-soft)">(drag the line)</span></span><input type="checkbox" class="sw" id="split"></label>
       <label class="row"><span>HDR badge on videos</span><input type="checkbox" class="sw" id="badge"></label>
+      <label class="row" title="Auto lowers the render resolution if frames are being dropped. Fastest renders at 1080p and skips sharpening and debanding."><span>Performance</span>
+        <select id="perf">
+          <option value="auto">Auto</option>
+          <option value="best">Best quality</option>
+          <option value="fast">Fastest</option>
+        </select>
+      </label>
       <div class="keys" id="keys"></div>
     </section>
   </main>

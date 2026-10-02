@@ -157,7 +157,8 @@ struct U {
   sharpen: f32,     // 0..1
   gamut: f32,       // 0..1, how far vivid colours are stretched toward the P3 edge
   vivid: f32,       // 0..1, how much coloured lights are boosted like white ones
-  p1: f32, p2: f32, p3: f32,
+  lite: f32,        // 1 = skip sharpening and debanding (performance)
+  p2: f32, p3: f32,
 };
 @group(0) @binding(0) var<uniform> u: U;
 @group(0) @binding(1) var samp: sampler;
@@ -272,39 +273,44 @@ fn clipDepth(uv: vec2f) -> f32 {
 fn fs(in: VOut) -> @location(0) vec4f {
   let enc = tap(in.uv);
 
-  // Sharpen, contrast-adaptive (the idea behind AMD's CAS): look at the four
-  // neighbours, and sharpen less where there's already a strong edge or the
-  // result would clip, so edges don't grow halos. Texture too faint to be
-  // real detail (compression noise) is left alone.
-  let sn = tap(in.uv - vec2f(0.0, u.step.y));
-  let ss = tap(in.uv + vec2f(0.0, u.step.y));
-  let sw = tap(in.uv - vec2f(u.step.x, 0.0));
-  let se = tap(in.uv + vec2f(u.step.x, 0.0));
-  let lo = min(enc, min(min(sn, ss), min(sw, se)));
-  let hi = max(enc, max(max(sn, ss), max(sw, se)));
-  let amp = sqrt(clamp(min(lo, 1.0 - hi) / max(hi, vec3f(0.0001)), vec3f(0.0), vec3f(1.0)));
-  let gate = smoothstep(2.0 / 255.0, 8.0 / 255.0, maxc(hi - lo));
-  let k = -amp * (0.2 * u.sharpen * gate);
-  let sharp = (enc + (sn + ss + sw + se) * k) / (1.0 + 4.0 * k);
+  // Sharpening and debanding each read 4 more video pixels per output pixel,
+  // which is most of this pass's cost. The light path skips both.
+  var smoothed = enc;
+  if (u.lite < 0.5) {
+    // Sharpen, contrast-adaptive (the idea behind AMD's CAS): look at the four
+    // neighbours, and sharpen less where there's already a strong edge or the
+    // result would clip, so edges don't grow halos. Texture too faint to be
+    // real detail (compression noise) is left alone.
+    let sn = tap(in.uv - vec2f(0.0, u.step.y));
+    let ss = tap(in.uv + vec2f(0.0, u.step.y));
+    let sw = tap(in.uv - vec2f(u.step.x, 0.0));
+    let se = tap(in.uv + vec2f(u.step.x, 0.0));
+    let lo = min(enc, min(min(sn, ss), min(sw, se)));
+    let hi = max(enc, max(max(sn, ss), max(sw, se)));
+    let amp = sqrt(clamp(min(lo, 1.0 - hi) / max(hi, vec3f(0.0001)), vec3f(0.0), vec3f(1.0)));
+    let gate = smoothstep(2.0 / 255.0, 8.0 / 255.0, maxc(hi - lo));
+    let k = -amp * (0.2 * u.sharpen * gate);
+    let sharp = (enc + (sn + ss + sw + se) * k) / (1.0 + 4.0 * k);
 
-  // Deband: compare against 4 neighbours at a random offset. Where they're
-  // all within a few 8-bit steps (a smooth gradient), use their average, which
-  // fills in the in-between values the 8-bit source couldn't store. Real
-  // detail and edges fail the test and keep the sharpened value.
-  let r1 = hash(in.pos.xy + u.seed * 91.7);
-  let r2 = hash(in.pos.xy * 1.37 + u.seed * 37.3 + 11.0);
+    // Deband: compare against 4 neighbours at a random offset. Where they're
+    // all within a few 8-bit steps (a smooth gradient), use their average, which
+    // fills in the in-between values the 8-bit source couldn't store. Real
+    // detail and edges fail the test and keep the sharpened value.
+    let r1 = hash(in.pos.xy + u.seed * 91.7);
+    let r2 = hash(in.pos.xy * 1.37 + u.seed * 37.3 + 11.0);
+    let ang = r1 * 6.2831853;
+    let d = vec2f(cos(ang), sin(ang)) * (4.0 + 12.0 * r2);
+    let q = vec2f(-d.y, d.x);
+    let t0 = tap(in.uv + d * u.texel);
+    let t1 = tap(in.uv - d * u.texel);
+    let t2 = tap(in.uv + q * u.texel);
+    let t3 = tap(in.uv - q * u.texel);
+    let dv = max(max(maxc(abs(t0 - enc)), maxc(abs(t1 - enc))),
+                 max(maxc(abs(t2 - enc)), maxc(abs(t3 - enc))));
+    let flat = 1.0 - smoothstep(1.5 / 255.0, 3.5 / 255.0, dv);
+    smoothed = mix(sharp, (t0 + t1 + t2 + t3) * 0.25, flat);
+  }
   let r3 = hash(in.pos.xy * 0.73 + u.seed * 53.1 + 5.0);
-  let ang = r1 * 6.2831853;
-  let d = vec2f(cos(ang), sin(ang)) * (4.0 + 12.0 * r2);
-  let q = vec2f(-d.y, d.x);
-  let t0 = tap(in.uv + d * u.texel);
-  let t1 = tap(in.uv - d * u.texel);
-  let t2 = tap(in.uv + q * u.texel);
-  let t3 = tap(in.uv - q * u.texel);
-  let dv = max(max(maxc(abs(t0 - enc)), maxc(abs(t1 - enc))),
-               max(maxc(abs(t2 - enc)), maxc(abs(t3 - enc))));
-  let flat = 1.0 - smoothstep(1.5 / 255.0, 3.5 / 255.0, dv);
-  let smoothed = mix(sharp, (t0 + t1 + t2 + t3) * 0.25, flat);
 
   // A touch of dither on top.
   let lin = toLinear(clamp(smoothed + (r3 - 0.5) / 255.0, vec3f(0.0), vec3f(1.0)));

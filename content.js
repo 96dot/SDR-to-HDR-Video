@@ -6,12 +6,21 @@
   window.__sdr2hdrLoaded = true;
 
   const DEFAULTS = { enabled: true, peak: 4, strength: 0.5, sat: 1.15, soften: 0.5, sharpen: 0.35, gamut: 0.5, vivid: 0.5,
+    perf: 'auto',  // 'auto', 'best' or 'fast'
     split: false, splitPos: 0.5, badge: true,
     headroom: 0,   // display maximum from the calibration page; 0 = not calibrated
     sites: {},     // per-site overrides, keyed by hostname
   };
   const MIN_SIZE = 200;   // ignore thumbnails / tiny previews (CSS px)
   const MAX_DIM = 3840;   // cap canvas backing size
+  // Performance levels. Auto starts at 0 and steps down if frames are being
+  // dropped; each step shrinks the canvas we render to (the browser scales it
+  // back up), and the last also skips sharpening and debanding.
+  const LEVELS = [
+    { maxDim: MAX_DIM, lite: false },
+    { maxDim: 2560, lite: false },
+    { maxDim: 1920, lite: true },
+  ];
   const FMT = 'rgba16float';
 
   // Per-site settings follow the top-level page, so an embedded player uses
@@ -43,6 +52,12 @@
     if (!adapter) throw new Error('No WebGPU adapter');
     const device = await adapter.requestDevice();
     device.addEventListener('uncapturederror', (e) => log('GPU error:', e.error.message));
+    // Which GPU the browser gave us. On laptops with two GPUs, Chrome on
+    // Windows uses one for everything, usually the integrated one, so this
+    // is the first thing to check when 4K playback stutters.
+    const info = adapter.info || {};
+    const name = [info.vendor, info.architecture].filter(Boolean).join(' ') || info.description || 'unknown';
+    log('rendering on GPU:', name);
 
     const make = (code, vsEntry) => {
       const module = device.createShaderModule({ code });
@@ -66,7 +81,7 @@
       gpuPromise = null;
       for (const s of [...sessions.values()]) s.destroy();
     });
-    return { device, sampler, down1, down, scene, main };
+    return { device, sampler, down1, down, scene, main, name };
   }
 
   function getGpu() {
@@ -81,15 +96,27 @@
   }
 
   // True if the video is already HDR (PQ / HLG), in which case we leave it alone.
+  // Looking means grabbing a frame, so the answer is remembered for a few
+  // seconds per video; a new source or a change of resolution (a quality
+  // switch) asks again straight away.
+  const HDR_RECHECK_MS = 5000;
+  const hdrSeen = new WeakMap();   // video -> { key, at, hdr }
   function isHdrSource(video) {
+    const key = `${video.currentSrc}|${video.videoWidth}x${video.videoHeight}`;
+    const now = performance.now();
+    const seen = hdrSeen.get(video);
+    if (seen && seen.key === key && now - seen.at < HDR_RECHECK_MS) return seen.hdr;
+    let hdr;
     try {
       const f = new VideoFrame(video);
       const t = f.colorSpace && f.colorSpace.transfer;
       f.close();
-      return t === 'pq' || t === 'hlg';
+      hdr = t === 'pq' || t === 'hlg';
     } catch {
-      return false;
+      return false;                // no frame to look at yet: not an answer, so don't remember it
     }
+    hdrSeen.set(video, { key, at: now, hdr });
+    return hdr;
   }
 
   function eligible(v) {
@@ -171,6 +198,12 @@
       this.gpu = gpu;
       this.dead = false;
       this.reset = true;        // snap the scene average on the first frame
+      this.box = null;          // last laid-out size: { w, h, sx, sy }
+      this.needsDraw = false;   // canvas was resized and hasn't been redrawn at the new size yet
+      this.resetAuto();
+      this.lastPresented = null;  // the browser's running count of frames presented
+      this.win = { t0: performance.now(), rendered: 0, p0: 0, q0: 0, dirty: true };   // first window is warm-up
+      this.stats = null;
       this.top = false;         // true while living in the top layer (see setTopLayer)
       this.pop = null;
       this.clip = '';
@@ -235,14 +268,20 @@
       this.ro = new ResizeObserver(() => { this.layout(); this.render(); });
       this.ro.observe(video);
 
-      this.onMeta = () => { this.reset = true; this.layout(); };
+      this.onMeta = () => { this.reset = true; this.resetAuto(); this.layout(); };
       this.onSeek = () => { this.reset = true; };
       video.addEventListener('loadedmetadata', this.onMeta);
       video.addEventListener('seeked', this.onSeek);
+      this.onDisturb = () => { this.win.dirty = true; };
+      this.disturbances = ['pause', 'play', 'seeking', 'waiting', 'ratechange', 'loadedmetadata'];
+      for (const e of this.disturbances) video.addEventListener(e, this.onDisturb);
+      document.addEventListener('visibilitychange', this.onDisturb);
 
-      this.onFrame = () => {
+      this.onFrame = (now, meta) => {
         if (this.dead) return;
         this.render();
+        this.win.rendered++;
+        if (meta) this.lastPresented = meta.presentedFrames;
         if (!this.dead) this.video.requestVideoFrameCallback(this.onFrame);
       };
 
@@ -251,9 +290,118 @@
       if (!this.dead) video.requestVideoFrameCallback(this.onFrame);
     }
 
+    // Auto-quality state, started afresh for every new video.
+    resetAuto() {
+      this.level = 0;           // index into LEVELS when perf is 'auto'
+      this.bad = 0;             // consecutive measurement windows with too many drops
+      this.holdUntil = 0;       // no judging until this time, after a level change
+      this.baseline = null;     // { drop, fps } at full quality, before the first step down
+      this.autoDone = false;    // nothing further to try for this video
+      this.busy = false;        // lowering quality didn't help: the page, not the GPU, is the limit
+    }
+
+    quality() {
+      if (settings.perf === 'best') return LEVELS[0];
+      if (settings.perf === 'fast') return LEVELS[2];
+      return LEVELS[this.level];
+    }
+
+    // Canvas backing size, in real pixels, for a given quality level.
+    backingSize(q) {
+      const { w, h, sx, sy } = this.box;
+      const v = this.video;
+      const dpr = window.devicePixelRatio || 1;
+      const bw = w * dpr, bh = h * dpr;
+      let k = Math.min(1, q.maxDim / Math.max(bw, bh));
+      if (settings.perf !== 'best') {
+        // No point drawing the picture with more pixels than the video has:
+        // a 1080p video on a 4K screen is drawn at 1080p and scaled up by the
+        // browser, which looks the same for a quarter of the work. This is
+        // measured on the picture itself, not the player's box, so a video
+        // with bars beside it (or one cropped to fill) still gets its full
+        // resolution. Never below 1280 on the long side.
+        const want = Math.max(v.videoWidth, v.videoHeight, 1280);
+        k = Math.min(k, want / Math.max(bw * sx, bh * sy));
+      }
+      return [Math.max(1, Math.round(bw * k)), Math.max(1, Math.round(bh * k))];
+    }
+
+    // The next lower level that would actually change something. On a 1440p
+    // screen the 1440p level changes nothing, so it's skipped.
+    nextLevel() {
+      const c = this.canvas;
+      for (let l = this.level + 1; l < LEVELS.length; l++) {
+        const [bw, bh] = this.backingSize(LEVELS[l]);
+        if (LEVELS[l].lite !== LEVELS[this.level].lite || bw * bh < c.width * c.height * 0.9) return l;
+      }
+      return -1;
+    }
+
+    // Work out how many of the video's frames we failed to draw, about every
+    // three seconds, and in auto mode act on it.
+    //
+    // "Frames we should have drawn" is the larger of two counts the browser
+    // keeps: frames it presented, and frames the decoder produced. This runs
+    // from the once-a-second scan rather than from the frame callback, so it
+    // still runs when callbacks have all but stopped.
+    perfTick() {
+      const v = this.video, w = this.win, t = performance.now();
+      if (t - w.t0 < 3000) return;
+      const q = v.getVideoPlaybackQuality ? v.getVideoPlaybackQuality() : null;
+      const decoded = q ? q.totalVideoFrames : 0;
+      const presented = this.lastPresented == null ? w.p0 : this.lastPresented;
+      const expected = Math.max(presented - w.p0, decoded - w.q0, w.rendered);
+      // A window with a pause, seek, buffering or a hidden tab in it says
+      // nothing about performance, so it's thrown away. So is anything played
+      // faster than normal speed, where skipping frames is expected.
+      const clean = !w.dirty && !v.paused && !v.seeking && !document.hidden && v.playbackRate <= 1;
+      this.win = { t0: t, rendered: 0, p0: presented, q0: decoded, dirty: false };
+      if (!clean || expected < 30) return;
+
+      const drop = 1 - w.rendered / expected;
+      const fps = w.rendered / ((t - w.t0) / 1000);
+      this.stats = { fps, drop };
+      if (settings.perf !== 'auto' || this.autoDone || !this.box || t < this.holdUntil) return;
+
+      // Two bad windows in a row, so a one-off hitch doesn't cost quality for
+      // the rest of the video.
+      this.bad = drop > 0.08 ? this.bad + 1 : 0;
+      if (this.bad < 2) return;
+      this.bad = 0;
+
+      const next = this.nextLevel();
+      if (next >= 0) {
+        if (!this.baseline) this.baseline = { drop, fps };
+        this.level = next;
+        this.holdUntil = t + 6000;       // give the new level time to show its effect
+        log(`dropping ${Math.round(drop * 100)}% of frames, lowering quality to level ${next}`);
+        this.layout();
+        return;
+      }
+
+      // Already at the lowest level and still dropping frames. If it's no
+      // better than where we started, the GPU was never the problem: the page
+      // is too busy to run our frame callback on time. Lower quality buys
+      // nothing then, so go back to full quality and leave it there.
+      this.autoDone = true;
+      const b = this.baseline;
+      if (b && !(drop <= b.drop * 0.7 || fps >= b.fps * 1.15)) {
+        this.busy = true;
+        this.level = 0;
+        log('lower quality did not reduce dropped frames; restoring full quality (the page is the bottleneck)');
+        this.layout();
+      }
+    }
+
     updateBadge() {
       this.badge.style.display = settings.badge ? 'flex' : 'none';
       this.badge.style.opacity = this.badgeDim ? '.4' : '.95';
+      // The frosted-glass blur makes the browser re-filter what's behind the
+      // badge on every video frame. Once the badge has faded it's barely
+      // visible anyway, so drop it for the rest of playback.
+      const glass = this.badgeDim ? 'none' : 'blur(10px) saturate(1.4)';
+      this.badge.style.backdropFilter = glass;
+      this.badge.style.webkitBackdropFilter = glass;
       this.knob.style.display = settings.split ? 'flex' : 'none';
     }
 
@@ -318,14 +466,8 @@
       b.style.top = (top + 12) + 'px';
       b.style.zIndex = z;
 
-      const dpr = window.devicePixelRatio || 1;
-      let bw = w * dpr, bh = h * dpr;
-      const k = Math.min(1, MAX_DIM / Math.max(bw, bh));
-      bw = Math.max(1, Math.round(bw * k));
-      bh = Math.max(1, Math.round(bh * k));
-      if (c.width !== bw) c.width = bw;
-      if (c.height !== bh) c.height = bh;
-
+      // How the picture sits in the player's box: sx, sy are its size as a
+      // fraction of the box (below 1 = bars on that axis, above 1 = cropped).
       const va = v.videoWidth / v.videoHeight, ea = w / h;
       let sx = 1, sy = 1;
       if (cs.objectFit === 'cover') {
@@ -334,6 +476,16 @@
         if (va > ea) sy = ea / va; else sx = va / ea;
       }
       this.scale = [sx, sy];
+      this.box = { w, h, sx, sy };
+
+      // After a resize the canvas is left holding a stale picture at the old
+      // size until something draws again (see needsDraw).
+      const [bw, bh] = this.backingSize(this.quality());
+      if (c.width !== bw || c.height !== bh) {
+        c.width = bw;
+        c.height = bh;
+        this.needsDraw = true;
+      }
 
       // Split handle sits on the line, halfway down the video.
       const kn = this.knob;
@@ -407,6 +559,7 @@
       u[14] = settings.sharpen;
       u[15] = settings.gamut;
       u[16] = settings.vivid;
+      u[17] = this.quality().lite ? 1 : 0;
       device.queue.writeBuffer(this.ubuf, 0, u);
 
       const enc = device.createCommandEncoder();
@@ -434,6 +587,7 @@
         { buffer: this.ubuf }, sampler, ext, ...this.lv, this.sv[this.si],
       ]));
       device.queue.submit([enc.finish()]);
+      this.needsDraw = false;
     }
 
     destroy() {
@@ -443,6 +597,8 @@
       this.ro.disconnect();
       this.video.removeEventListener('loadedmetadata', this.onMeta);
       this.video.removeEventListener('seeked', this.onSeek);
+      for (const e of this.disturbances) this.video.removeEventListener(e, this.onDisturb);
+      document.removeEventListener('visibilitychange', this.onDisturb);
       try { this.ctx.unconfigure(); } catch {}
       for (const t of this.textures) t.destroy();
       this.ubuf.destroy();
@@ -458,9 +614,10 @@
   const isActive = () => settings.enabled && !siteOff && hdrDisplay.matches && !gpuFailed;
 
   // Videos can hide inside shadow roots (custom player elements), which a
-  // plain querySelectorAll doesn't reach. Walking the whole page for shadow
-  // roots is the slow part, so that's refreshed every few seconds and the
-  // roots are cached in between.
+  // plain querySelectorAll doesn't reach. Finding the roots means visiting
+  // every element on the page, which on a big page is long enough to cost a
+  // video frame if done in one go. So it's done in the browser's idle time, a
+  // slice at a time, and the roots found are kept until the next pass.
   const shadowOf = (el) => {
     try {
       return chrome.dom && chrome.dom.openOrClosedShadowRoot
@@ -470,20 +627,44 @@
     }
   };
   let roots = [];
-  let rootsAt = -Infinity;
-  function findRoots(node, out) {
-    for (const el of node.querySelectorAll('*')) {
-      const sr = shadowOf(el);
-      if (sr) { out.push(sr); findRoots(sr, out); }
-    }
+  let walking = false;
+  let lastWalk = -Infinity;
+  function refreshRoots() {
+    walking = true;
+    const found = [];
+    const todo = [document];        // documents / shadow roots still to look through
+    let list = null, i = 0;
+    const slice = (deadline) => {
+      // Normally use what idle time there is. If the page never goes idle the
+      // browser calls us anyway after the timeout; take a few ms then.
+      const until = performance.now() + (deadline.didTimeout ? 4 : Math.max(1, deadline.timeRemaining() - 1));
+      for (;;) {
+        if (!list) {
+          const node = todo.pop();
+          if (!node) break;
+          list = node.querySelectorAll('*');
+          i = 0;
+        }
+        while (i < list.length) {
+          if ((i & 63) === 0 && performance.now() > until) {
+            requestIdleCallback(slice, { timeout: 2000 });
+            return;
+          }
+          const sr = shadowOf(list[i++]);
+          if (sr) { found.push(sr); todo.push(sr); }
+        }
+        list = null;
+      }
+      roots = found;
+      walking = false;
+      lastWalk = performance.now();
+    };
+    requestIdleCallback(slice, { timeout: 2000 });
   }
   function allVideos() {
-    const now = performance.now();
-    if (now - rootsAt > 3000) {
-      rootsAt = now;
-      roots = [];
-      findRoots(document, roots);
-    }
+    // Less often once a video is being converted: new players rarely appear
+    // mid-playback.
+    if (!walking && performance.now() - lastWalk > (sessions.size ? 30000 : 5000)) refreshRoots();
     const vids = [...document.querySelectorAll('video')];
     for (const r of roots) vids.push(...r.querySelectorAll('video'));
     return vids;
@@ -492,15 +673,20 @@
   function scan() {
     const active = isActive();
     for (const [v, s] of [...sessions]) {
-      // The HDR check runs every scan, so switching quality to or from an
-      // HDR stream mid-video is picked up within a second.
-      if (!active || !v.isConnected || !eligible(v) || isHdrSource(v)) s.destroy();
-      else s.layout();
+      if (!active || !v.isConnected || !eligible(v) || isHdrSource(v)) { s.destroy(); continue; }
+      s.layout();
+      s.perfTick();
+      // After a resize the canvas needs drawing again. During playback the
+      // next frame does that, but a paused video has no next frame.
+      if (s.needsDraw) s.render();
     }
-    if (!active) return;
+    // Nothing to find in a tab nobody is looking at.
+    if (!active || document.hidden) return;
 
     for (const v of allVideos()) {
-      if (sessions.has(v) || !eligible(v) || isHdrSource(v)) continue;
+      // readyState 2 = there is a current frame, which the HDR check needs:
+      // without one it can't tell, and would wave an HDR video through.
+      if (sessions.has(v) || !eligible(v) || v.readyState < 2 || isHdrSource(v)) continue;
       getGpu().then((gpu) => {
         if (sessions.has(v) || !isActive() || !v.isConnected || !eligible(v) || isHdrSource(v)) return;
         sessions.set(v, new Session(v, gpu));
@@ -568,6 +754,27 @@
   window.addEventListener('pointercancel', endDrag, true);
   window.addEventListener('click', (e) => { if (swallowClick) stop(e); }, true);
 
+  // The popup asks for live numbers on the video being converted.
+  if (chrome.runtime && chrome.runtime.onMessage) {
+    chrome.runtime.onMessage.addListener((msg, sender, respond) => {
+      if (!msg || msg.type !== 'sdr2hdr-stats' || !sessions.size) return;
+      const s = [...sessions.values()].sort((a, b) => b.canvas.width - a.canvas.width)[0];
+      // Size the picture itself is drawn at (the canvas also covers any bars).
+      const drawn = [0, 1].map((i) => Math.round([s.canvas.width, s.canvas.height][i] * Math.min(1, s.scale[i])));
+      respond({
+        video: [s.video.videoWidth, s.video.videoHeight],
+        drawn,
+        fps: s.stats ? s.stats.fps : null,
+        drop: s.stats ? s.stats.drop : null,
+        level: settings.perf === 'auto' ? s.level : null,
+        busy: settings.perf === 'auto' && s.busy,
+        lite: s.quality().lite,
+        paused: s.video.paused,
+        gpu: s.gpu.name,
+      });
+    });
+  }
+
   chrome.storage.local.get(DEFAULTS, applySettings);
   chrome.storage.onChanged.addListener((changes, area) => {
     if (area !== 'local') return;
@@ -577,6 +784,7 @@
   });
 
   document.addEventListener('fullscreenchange', scan);
+  document.addEventListener('visibilitychange', scan);
   hdrDisplay.addEventListener('change', scan);   // window moved to another monitor
   setInterval(scan, 1000);
 })();
