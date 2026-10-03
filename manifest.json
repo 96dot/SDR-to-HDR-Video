@@ -1,8 +1,8 @@
 {
   "manifest_version": 3,
-  "name": "SDR to HDR Video",
-  "version": "0.8.4",
-  "description": "Real-time SDR to HDR video conversion on your GPU using WebGPU.",
+  "name": "Headroom HDR",
+  "version": "1.0",
+  "description": "Real-time SDR to HDR video on your GPU, using the brightness your display has to spare.",
   "minimum_chrome_version": "129",
   "icons": {
     "16": "icons/icon16.png",
@@ -20,7 +20,7 @@
   ],
   "action": {
     "default_popup": "popup.html",
-    "default_title": "SDR to HDR Video",
+    "default_title": "Headroom HDR",
     "default_icon": {
       "16": "icons/icon16.png",
       "32": "icons/icon32.png",
@@ -51,6 +51,16 @@
       "description": "Switch between the shader and the trained model"
     }
   },
+  "web_accessible_resources": [
+    {
+      "resources": [
+        "pacer.html"
+      ],
+      "matches": [
+        "<all_urls>"
+      ]
+    }
+  ],
   "content_scripts": [
     {
       "matches": [
@@ -59,6 +69,9 @@
       "js": [
         "shader.js",
         "model.js",
+        "diag.js",
+        "pacer.js",
+        "cue.js",
         "content.js"
       ],
       "all_frames": true,

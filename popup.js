@@ -1,7 +1,7 @@
 const DEFAULTS = {
   enabled: true, peak: 4, strength: 0.5, sat: 1.15, soften: 0.5, sharpen: 0.35, gamut: 0.5, vivid: 0.5,
-  perf: 'auto', timing: 'video',
-  split: false, splitPos: 0.5, badge: true, stats: false,
+  perf: 'auto', poll: true,
+  split: false, splitPos: 0.5, badge: true, stats: false, hideOriginal: true, pace: true, cue: 'ping',
   method: 'shader', splitLeft: 'original', splitRight: 'shader', modelInfo: null,
   headroom: 0, sites: {},
 };
@@ -64,8 +64,11 @@ function show() {
   }
   $('badge').checked = state.badge;
   $('stats').checked = state.stats;
+  $('hideOriginal').checked = state.hideOriginal;
   $('perf').value = state.perf;
-  $('timing').value = state.timing;
+  $('poll').checked = state.poll;
+  $('pace').checked = state.pace;
+  $('cue').value = state.cue;
 
   $('siteBox').hidden = !site;
   if (site) {
@@ -88,7 +91,35 @@ function show() {
     : 'Display max: not calibrated';
 }
 
-for (const k of ['enabled', 'badge', 'stats', 'split']) {
+$('cue').addEventListener('change', (e) => {
+  state.cue = e.target.value;
+  chrome.storage.local.set({ cue: state.cue });
+  SDR2HDR_CUE.play(state.cue);
+});
+$('cueTest').addEventListener('click', () => { SDR2HDR_CUE.play(state.cue === 'off' ? 'ping' : state.cue); });
+// The cog: settings and diagnostics in place of the picture controls.
+$('cog').addEventListener('click', () => {
+  const open = $('setView').hidden;
+  $('setView').hidden = !open;
+  $('mainView').hidden = open;
+  $('cog').setAttribute('aria-pressed', String(open));
+});
+// Colour themes (see theme.js).
+const markTheme = () => {
+  const now = document.documentElement.dataset.theme || 'amber';
+  for (const b of document.querySelectorAll('.swatch')) b.setAttribute('aria-pressed', String(b.dataset.theme === now));
+};
+for (const b of document.querySelectorAll('.swatch')) {
+  b.addEventListener('click', () => {
+    applyTheme(b.dataset.theme);
+    try { localStorage.setItem('theme', b.dataset.theme); } catch (e) {}
+    chrome.storage.local.set({ theme: b.dataset.theme });
+    markTheme();
+  });
+}
+markTheme();
+chrome.storage.local.get({ theme: 'amber' }, () => setTimeout(markTheme, 0));
+for (const k of ['enabled', 'badge', 'stats', 'split', 'hideOriginal', 'poll', 'pace']) {
   $(k).addEventListener('change', (e) => {
     state[k] = e.target.checked;
     chrome.storage.local.set({ [k]: state[k] });
@@ -131,12 +162,10 @@ $('modelBtn').addEventListener('click', () => {
   chrome.tabs.create({ url: chrome.runtime.getURL('model.html') });
 });
 
-for (const k of ['perf', 'timing']) {
-  $(k).addEventListener('change', (e) => {
-    state[k] = e.target.value;
-    chrome.storage.local.set({ [k]: state[k] });
-  });
-}
+$('perf').addEventListener('change', (e) => {
+  state.perf = e.target.value;
+  chrome.storage.local.set({ perf: state.perf });
+});
 
 // Changing the method also puts it on the right of the split, so the split
 // keeps showing "the original against what I'm using" unless you set it up
@@ -265,13 +294,17 @@ async function pollStats() {
   if (s.paused) text += ', paused';
   else if (s.fps != null) text += `, ${Math.round(s.fps)} fps, ${Math.round(s.drop * 100)}% dropped`;
   if (s.busy) text += ' (busy page)';
+  else if (s.eased) text += ' (every other frame)';
+  else if (s.limited) text += ' (lost outside the GPU)';
   else if (s.level) text += ' (auto-lowered)';
   $('statusText').textContent = text;
   $('status').title = `Video ${s.video.join('x')}, drawn at ${s.drawn.join('x')}` +
     (s.lite ? ', sharpening and debanding off' : '') +
     (s.gap != null ? `. Longest gap between frames: ${Math.round(s.gap)} ms` : '') +
-    `. Drawing on every ${s.timing === 'screen' ? 'screen refresh' : 'video frame'}. GPU: ${s.gpu}.` +
-    (s.busy ? ' Lowering quality did not reduce dropped frames, so the page itself is too busy; full quality was restored.' : '');
+    `. Drawing on every ${s.poll ? 'new frame, checked every screen refresh' : 'new frame the browser announces'}. GPU: ${s.gpu}.` +
+    (s.busy ? ' Lowering quality did not reduce dropped frames, and the page is busy, so full quality was restored.' : '') +
+    (s.eased ? ' Every other frame of the video is being taken for the moment: the decoder was falling behind, or the browser\'s screen queue was stuck.' : '') +
+    (s.limited ? ' Frames are being lost, but the GPU has time to spare, so lower quality would not help and was not tried. Check that "Hide original" is on; click Report for the details.' : '');
   $('status').classList.toggle('bad', !s.paused && s.drop != null && s.drop > 0.08);
 }
 setInterval(pollStats, 1000);

@@ -1,54 +1,82 @@
-/* Shared look for the popup and the calibration page: pastel glassmorphism.
-   Frosted translucent cards over soft blurred colour, with a deep violet ink
-   for text so it stays readable on any of the pastels. */
+/* Shared look for the popup, the calibration page and the model page: dark
+   glass. Frosted translucent cards with a thin bright edge over slow blurred
+   light, and one warm accent that glows where something is switched on.
+   The colours come in sets ("themes", chosen in the popup's settings and
+   put on <html data-theme> by theme.js); Amber is the one it comes with. */
 
 :root {
-  color-scheme: light dark;
+  color-scheme: dark;
 
-  /* pastels */
-  --lavender: #cdb8f7;
-  --pink: #ffc6de;
-  --peach: #ffd9bf;
-  --mint: #b8f0d8;
-  --sky: #bcdcff;
+  /* light behind the glass */
+  --blob1: #ffb347;
+  --blob2: #ff8a3d;
+  --blob3: #3b5a9a;
+  --blob4: #ffd27a;
 
   /* surfaces */
-  --page: linear-gradient(155deg, #f4edff 0%, #ffeef6 48%, #e9f5ff 100%);
-  --glass: rgba(255, 255, 255, .52);
-  --glass-strong: rgba(255, 255, 255, .78);
-  --edge: rgba(255, 255, 255, .8);
-  --shine: rgba(255, 255, 255, .9);
-  --shadow: rgba(110, 90, 170, .16);
-  --track: rgba(110, 95, 165, .18);
-  --blob-opacity: .8;
+  --page: radial-gradient(120% 90% at 85% 0%, #3a2a14 0%, #141a2c 45%, #0b0f1c 100%);
+  --glass: rgba(255, 255, 255, .07);
+  --glass-strong: rgba(255, 255, 255, .13);
+  --edge: rgba(255, 236, 200, .22);
+  --shine: rgba(255, 240, 210, .18);
+  --shadow: rgba(0, 0, 0, .45);
+  --track: rgba(255, 255, 255, .14);
+  --blob-opacity: .42;
 
   /* ink */
-  --ink: #443c63;
-  --ink-soft: #5d5583;
-  --focus: #8b74e0;
+  --ink: #fbf6ec;
+  --ink-soft: #cfc6b4;
+  --focus: #ffd58a;
 
-  /* accent: lavender into pink */
-  --accent-a: #a892ee;
-  --accent-b: #f29ac6;
+  /* accent */
+  --accent-a: #ffc566;
+  --accent-b: #ff9d3c;
   --accent: linear-gradient(120deg, var(--accent-a), var(--accent-b));
+  --glow: rgba(255, 180, 80, .55);
+  --on-accent: #2a1a05;
 
-  --ok: #58c79b;
-  --warn: #f0957f;
+  --ok: #7fe0a8;
+  --warn: #ff9a85;
+
+  /* pastel names kept for pages that still ask for them */
+  --lavender: var(--blob1); --pink: var(--blob2); --sky: var(--blob3); --mint: var(--blob4); --peach: var(--blob2);
 }
 
+:root[data-theme="ocean"] {
+  --blob1: #2fd6c8; --blob2: #2b7bff; --blob3: #7a4dff; --blob4: #8ff0ff;
+  --page: radial-gradient(120% 90% at 85% 0%, #0d3540 0%, #0c1a30 45%, #070d1a 100%);
+  --edge: rgba(200, 245, 255, .22); --shine: rgba(210, 248, 255, .18);
+  --ink: #eefaff; --ink-soft: #b4cbd6; --focus: #8ff0ff;
+  --accent-a: #5ff0dc; --accent-b: #3aa0ff; --glow: rgba(70, 200, 255, .55); --on-accent: #04202a;
+}
+
+:root[data-theme="rose"] {
+  --blob1: #ff6fa8; --blob2: #b05cff; --blob3: #ff9a6a; --blob4: #ffc1dc;
+  --page: radial-gradient(120% 90% at 85% 0%, #40152c 0%, #1e1430 45%, #0f0a1a 100%);
+  --edge: rgba(255, 215, 235, .22); --shine: rgba(255, 225, 240, .18);
+  --ink: #fff2f8; --ink-soft: #d6bccb; --focus: #ffb3d4;
+  --accent-a: #ff8fc0; --accent-b: #c06bff; --glow: rgba(255, 110, 180, .55); --on-accent: #2a0518;
+}
+
+/* Aurora: the pastel look the extension had before 0.11, light or dark with the system. */
+:root[data-theme="aurora"] {
+  color-scheme: light dark;
+  --blob1: #cdb8f7; --blob2: #ffc6de; --blob3: #bcdcff; --blob4: #b8f0d8;
+  --page: linear-gradient(155deg, #f4edff 0%, #ffeef6 48%, #e9f5ff 100%);
+  --glass: rgba(255, 255, 255, .52); --glass-strong: rgba(255, 255, 255, .78);
+  --edge: rgba(255, 255, 255, .8); --shine: rgba(255, 255, 255, .9);
+  --shadow: rgba(110, 90, 170, .16); --track: rgba(110, 95, 165, .18); --blob-opacity: .8;
+  --ink: #443c63; --ink-soft: #5d5583; --focus: #8b74e0;
+  --accent-a: #a892ee; --accent-b: #f29ac6; --glow: rgba(168, 146, 238, .45); --on-accent: #fff;
+  --ok: #58c79b; --warn: #f0957f;
+}
 @media (prefers-color-scheme: dark) {
-  :root {
+  :root[data-theme="aurora"] {
     --page: linear-gradient(155deg, #1c1830 0%, #2a1f3e 50%, #16293a 100%);
-    --glass: rgba(255, 255, 255, .075);
-    --glass-strong: rgba(255, 255, 255, .16);
-    --edge: rgba(255, 255, 255, .16);
-    --shine: rgba(255, 255, 255, .14);
-    --shadow: rgba(0, 0, 0, .35);
-    --track: rgba(255, 255, 255, .16);
-    --blob-opacity: .34;
-    --ink: #f2edff;
-    --ink-soft: #c6bfe2;
-    --focus: #c9b9ff;
+    --glass: rgba(255, 255, 255, .075); --glass-strong: rgba(255, 255, 255, .16);
+    --edge: rgba(255, 255, 255, .16); --shine: rgba(255, 255, 255, .14);
+    --shadow: rgba(0, 0, 0, .35); --track: rgba(255, 255, 255, .16); --blob-opacity: .34;
+    --ink: #f2edff; --ink-soft: #c6bfe2; --focus: #c9b9ff;
   }
 }
 
@@ -78,8 +106,8 @@ body {
   -webkit-backdrop-filter: blur(18px) saturate(1.5);
   backdrop-filter: blur(18px) saturate(1.5);
   border: 1px solid var(--edge);
-  border-radius: 18px;
-  box-shadow: 0 8px 26px var(--shadow), inset 0 1px 0 var(--shine);
+  border-radius: 20px;
+  box-shadow: 0 10px 30px var(--shadow), inset 0 1px 0 var(--shine), inset 0 0 0 1px rgba(255, 255, 255, .03);
 }
 
 h1, h2 { margin: 0; }
@@ -136,7 +164,7 @@ input.sw::before {
   box-shadow: 0 1px 4px rgba(60, 45, 110, .35);
   transition: transform .2s;
 }
-input.sw:checked { background: var(--accent); }
+input.sw:checked { background: var(--accent); box-shadow: 0 0 10px var(--glow); }
 input.sw:checked::before { transform: translateX(16px); }
 
 /* Slider. --p is the filled fraction, set from script. */
@@ -183,7 +211,7 @@ input[type=range]:active::-webkit-slider-thumb { transform: scale(1.15); }
 }
 .btn:hover { filter: brightness(1.06); }
 .btn:active { transform: scale(.97); }
-.btn.primary { background: var(--accent); color: #fff; border-color: rgba(255, 255, 255, .5); text-shadow: 0 1px 2px rgba(70, 40, 120, .35); }
+.btn.primary { background: var(--accent); color: var(--on-accent); border-color: rgba(255, 255, 255, .5); box-shadow: 0 0 14px var(--glow); }
 .btn.quiet { background: transparent; border-color: transparent; box-shadow: none; color: var(--ink-soft); padding: 2px 6px; font-weight: 600; }
 .btn.quiet:hover { background: var(--glass-strong); }
 
@@ -210,3 +238,7 @@ kbd {
 @media (prefers-reduced-motion: reduce) {
   * { transition: none !important; }
 }
+
+/* Dropdowns: the list itself is drawn by the system, so give it solid colours. */
+select option { background: #1b1f2e; color: #f4f1ea; }
+:root[data-theme="aurora"] select option { background: Canvas; color: CanvasText; }

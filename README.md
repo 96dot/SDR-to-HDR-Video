@@ -1,12 +1,19 @@
-# SDR to HDR Video
+# Headroom HDR
+
+(Called "SDR to HDR Video" before 0.11.) The name is the thing it uses: the brightness above white that an HDR display has to spare.
+
+**The popup.** Picture controls up front. The cog opens settings: colour theme (Amber, Ocean, Rose, or the old pastel Aurora), the three playback switches that are best left on (each says what is recommended), and diagnostics (Stats, Copy report, the wiggle sound, and the test keys).
+
+The selected theme controls the popup colours and the generated highlight icon in its header and the browser toolbar. The browser's extensions list keeps the default icon.
 
 A Chromium extension that converts ordinary (SDR) web video to HDR in real time on your GPU. It is a hand-tuned inverse tone mapper written as WebGPU shaders, with no driver hooks, and nothing leaves your machine. Optionally, a small model you train yourself on your own HDR movies can take over the brightness decisions.
 
 It is in the same spirit as Nvidia's RTX Video HDR, but works on any GPU that supports WebGPU. It was built and tuned on an AMD Radeon RX 9070 XT.
 
 <p>
-  <img src="docs/popup-light.png" alt="The settings popup, light theme" width="300">
-  <img src="docs/popup-dark.png" alt="The settings popup, dark theme" width="300">
+  <img src="docs/popup-main.png" alt="The popup" width="300">
+  <img src="docs/popup-settings.png" alt="Settings and diagnostics, behind the cog" width="300">
+  <br><img src="docs/themes.png" alt="The four colour themes: Amber, Ocean, Rose, Aurora" width="620">
 </p>
 
 ## Requirements
@@ -104,16 +111,16 @@ It does not work on DRM-protected video; nothing does.
 
 - **Enabled** (top-right switch): master on/off for all sites.
 - **Performance**: how hard the extension works your GPU.
-  - *Auto* (default) starts at full quality and steps down if it measures frames being dropped: to 1440p rendering, then to 1080p with sharpening and debanding off. Steps that would change nothing on your screen are skipped. If the lowest level drops just as many frames as full quality did, the GPU was never the problem, so it goes back to full quality and stops adjusting. It starts afresh for each new video.
+  - *Auto* (default) draws anything up to 4K at 60 frames a second at full size, and 4K at 120 at 1440p, scaled up. From there it goes by how long a frame's drawing actually takes the GPU, which it measures now and then: if that is more than half the time between two frames it steps down, to 1440p and then to 1080p with sharpening and debanding off. If frames are being lost while the GPU has time to spare, lower quality can't help, so it is left alone and the popup says the frames are being lost outside the GPU. In a browser that can't time the GPU, it steps down when frames are dropped for two measurements in a row (about six seconds). Steps that would change nothing on your screen are skipped. It starts afresh for each new video.
   - *Best quality* always renders at your screen's resolution with everything on.
   - *Fastest* always renders at 1080p with sharpening and debanding off.
-- **Frame timing**: when the picture is redrawn.
-  - *Each video frame* (default) draws once when the browser reports a new video frame. It is the least work.
-  - *Every screen refresh* draws on every refresh of your display, whether or not the video has a new frame, so the overlay updates at one steady rhythm. It is there for stutter that only shows up in fullscreen, particularly with FreeSync or G-Sync on. It costs more GPU: on a 144 Hz display a 30 fps video is drawn almost five times as often. Whether it helps on a given setup is something to try; see Troubleshooting.
+- **Hide original** (on by default): makes the original video invisible while the overlay is covering it. The browser otherwise goes on preparing the original for the screen as well, which takes frames the video decoder needs: with it showing, the player's controls appearing made the decoder drop frames for seconds at a time (measured on YouTube at 4K 60: 134 hitches in 52 seconds with it showing, 3 in 26 with it hidden). The video keeps playing, keeps its place on the page and still takes clicks, and it is made visible again the moment drawing fails or the extension is switched off. It isn't applied to a video that uses the browser's built-in controls. If a video ever goes black, switch this off.
+- **Every refresh** (on by default): looks at the video on every refresh of your display and draws whenever the frame it is showing has changed. The browser also announces each new frame, and drawing used to rely on that alone, but the announcement can come a refresh late, and by then that frame has been replaced by the next and is lost. Each new frame is first copied into a short queue (three copies are kept), and one is put on screen per refresh, in order, so a frame that turns up a moment late still gets its turn instead of being skipped. Nothing is drawn twice: a refresh with no new frame costs one cheap look. Switch it off only to find out whether it is causing a problem; drawing then relies on the browser's announcements alone.
+- **Pacing** (on by default; Windows only, and only for video of 45 frames a second or more): has the browser hand each redraw of the page to Windows about 5 ms into the screen refresh instead of right at its start, where that hand-over can get stuck and make 4K 60 video stutter (see "Performance" under "How it works"). It runs in a worker of its own and costs the page nothing. Switch it off only to find out whether it is causing a problem.
 - **Method**: what decides the brightness, the built-in **Shader** or **Your model**. See "Using a trained model". The button next to it loads, replaces or removes a model.
 - **Split**: split view. The switch turns it on; the two menus choose what is shown left and right of the line: **Original** (the untouched video), **Shader** or **Model** (needs a loaded model). Any pairing works, for example Original and Shader, Shader and Model, or Model and Original. Drag the line on the video to move it. Changing **Method** also puts the new method on the right-hand side, so the split keeps comparing against what you are using until you choose otherwise.
 - **Badge**: shows or hides the HDR badge.
-- **Stats**: turns the badge into a live readout that stays visible, so it can be read in fullscreen where the popup can't be opened. For example `HDR · 60 fps · 0% dropped · longest gap 18 ms · 3440x1440 · video timing`: new video frames drawn per second, the share of the video's frames that were never drawn, the longest wait between two frames, the size drawn at, and the frame timing in use. The numbers refresh about every three seconds and read "measuring" until the first clean stretch of playback.
+- **Stats**: turns the badge into a live readout that stays visible, so it can be read in fullscreen where the popup can't be opened. For example `HDR · 60 fps · 0% dropped · longest gap 18 ms · 3440x1440 · drawing: queue · original invisible`: new video frames drawn per second, the share of the video's frames that were never drawn, the longest wait between two frames, the size drawn at, how frames are being drawn, and whether the original is hidden. The numbers refresh about every three seconds and read "measuring" until the first clean stretch of playback.
 
 - **Report**: copies a diagnostic report for the current tab to the clipboard, for pasting into a bug report. It is recorded all the time, so you can click it after a problem has happened. Nothing is sent anywhere; it only goes to your clipboard. It holds:
   - your browser, screen, settings and the site's name (not the page address), and whether the extension, HDR and WebGPU are available on that page;
@@ -145,12 +152,13 @@ Chrome may not assign these automatically when an unpacked extension is reloaded
 
 For each eligible `<video>`, the extension places a canvas exactly over it and redraws that canvas on every video frame. The canvas is a 16-bit float WebGPU surface in Display P3 with extended tone mapping, which is what lets pixel values above 1.0 show up brighter than SDR white.
 
-With the shader method, each frame goes through six shader passes:
+With the shader method, each frame goes through seven shader passes:
 
-1. **Analyse.** The frame is shrunk to 480x270, recording brightness, which pixels are highlights, and which are clipped (blown out).
-2. **Shrink, three times,** down to 8x5. These small copies tell the main pass what the neighbourhood around each pixel looks like at several scales.
-3. **Scene average.** One number for the whole frame's brightness, eased over about 0.7 seconds so the picture doesn't pump, and snapping faster on a scene cut.
-4. **Convert.** The main pass, at full resolution. For every pixel it:
+1. **Copy.** The video frame is copied into an ordinary texture. Reading straight from a video is costly (two planes to fetch and a colour conversion each time), and the main pass reads nine video pixels for every pixel it draws, so this is done once here and everything after reads the copy.
+2. **Analyse.** The frame is shrunk to 480x270, recording brightness, which pixels are highlights, and which are clipped (blown out).
+3. **Shrink, three times,** down to 8x5. These small copies tell the main pass what the neighbourhood around each pixel looks like at several scales.
+4. **Scene average.** One number for the whole frame's brightness, eased over about 0.7 seconds so the picture doesn't pump, and snapping faster on a scene cut.
+5. **Convert.** The main pass, at full resolution. For every pixel it:
    - sharpens, backing off where there is already a strong edge;
    - debands, filling in the in-between shades that 8-bit video can't store, so smooth gradients don't show steps once stretched;
    - expands brightness. Shadows, midtones and skin are left alone; only the top of the range is pushed up. Small isolated highlights get the full peak, large bright areas get less than half, and bright scenes get less than dark ones;
@@ -161,9 +169,33 @@ With the shader method, each frame goes through six shader passes:
 
 ### Performance
 
-By default the extension draws each frame from the page's own scripting thread, when the browser tells it a new video frame is ready. (With **Frame timing** set to *Every screen refresh* it draws on each display refresh instead.) Two things can make it miss frames: the GPU not finishing in time (4K at 60 fps is a lot of pixels), or the page being too busy to run the callback at all. A missed frame shows as a stutter, because the overlay keeps showing the previous one.
+The extension draws from the page's own scripting thread. While a video plays it looks at it on every refresh of the screen; a frame it hasn't seen is copied into a texture of its own and queued, and one queued frame is put on screen per refresh.
 
-To keep GPU cost down it never draws the picture with more pixels than the video has (unless Performance is set to Best quality), and Auto lowers the render resolution when it measures drops. The browser scales the smaller picture back up to fit.
+Three things can make it miss frames, and the report tells them apart:
+
+- **The page being busy.** If the page's own scripts hold the thread for longer than a frame, nothing can be drawn in that time. Players do this briefly when their controls appear and disappear.
+- **The GPU's workload.** A frame's drawing takes well under a millisecond on a current desktop card, even at 4K, so this only matters on slow graphics hardware. Auto measures it and lowers the render size if it has to.
+- **The browser's screen queue getting stuck.** This was the cause of nearly all the stutter found while testing, and it has nothing to do with how hard the GPU is working. With the extension off, a fullscreen video goes to the screen on a path of its own. With it on, the browser redraws the whole page for every frame, because the picture is now a canvas on the page. A browser trace (Brave on Windows, 4K 60 on YouTube) showed what goes wrong: normally each redraw is handed to Windows in about 0.1 ms, but once one is handed over late (the player's controls coming up, going fullscreen, any hiccup) the next has to wait for the following screen refresh, about 15 ms, and so does every one after it, for as long as there is something to draw every refresh. That wait happens on the one thread in the browser's GPU process that also runs the video decoder and WebGPU, which are left about a tenth of their time: decoding takes several times as long, frames are thrown away for being late, the player stalls. It ends by itself only at the first refresh in which the page has nothing to redraw, which with a 60 fps video playing can be a long time coming. So the extension makes that refresh: when a frame handed to the GPU is still waiting after five frame times though the GPU has little to do, or the decoder shows trouble, it holds the page for a little over three refreshes ("holding a beat", about 55 ms at 60 Hz), which lets the queue empty. That costs a freeze of about four refreshes, once. From the same moment every other frame of the video is let go by, until the decoder has been well for a little over half a second: a second trace showed the queue filling again right after a beat, as the decoder caught up, unless the redraws were thinned out for that moment. The picture runs at half the frame rate for that time, usually about a second. If the mouse has just been moved it stays at half rate until the player's controls have gone again, because the player redraws the page every refresh while they show. The original video is also hidden while converting, so the browser isn't preparing its frames for the screen as well.
+
+  That is the cure. **Pacing** is an attempt at not needing it. The browser's own source shows why one late hand-over is enough: the page is drawn into a pair of buffers, one on screen and one being handed over, so a second hand-over has nowhere to go until Windows has taken the first. Left to itself the browser hands a redraw over about 0.8 ms after each screen refresh, the very moment Windows is taking the last one, and in both traces every hand-over that got stuck was one made at that moment; in the one stretch where the page's redraws happened to reach the browser about 5 ms into each refresh, 36 seconds of it, nothing got stuck at all. So a worker makes that the rule. The browser, before it draws a refresh, waits a while for everything on the page that has been told a refresh has begun and hasn't answered; a canvas drawn from a worker is such a thing, even one that is never put on the page; so the worker draws a dot into one, sleeps until 5 ms into the next refresh, and only then lets its answer go. The browser draws the moment it has the answer. A canvas that isn't on the page gives it nothing to redraw, so nothing is drawn that wouldn't have been. And if the hand-over gets stuck all the same, one that starts 6 ms into the refresh keeps the browser's GPU thread waiting for 10 ms of every 17 instead of 16, which leaves the decoder room. Whether it does keep the hand-over from getting stuck has to show on the machine: the report counts beats and dropped frames separately for pacing on and off.
+
+### Tracking down stutter
+
+The **Report** button copies a plain-text report for the tab. For every video it has a line per three seconds of playing (frames drawn, dropped, GPU time, decoder drops, how busy the page was) and a **hitch log**: one line for each time a frame of the video was lost or stayed on screen too long, with what else was going on at that moment (the page busy, the GPU behind, the decoder dropping frames, the picture size changing) and the likeliest cause.
+
+With **Stats** switched on the report goes deeper. The GPU is timed on every frame, the page's own screen updates are watched (if those are late too, the trouble is outside the video), and a video that is *not* being converted is measured the same way. That gives a like-for-like test:
+
+1. Switch Stats on, and the extension off. Reload the page and play the video for 30 seconds.
+2. Reload, switch the extension on, and play the same 30 seconds in the same window size.
+3. Click Report. It holds both runs and a table setting them side by side.
+
+With Stats on, runs are kept across a reload of the page for half an hour, so the one report at the end has both.
+
+Three keys work while Stats is on, including in fullscreen, and the report counts hitches separately for each setting they switch between: **Alt+Shift+O** switches Hide original, **Alt+Shift+P** switches Every refresh, and **Alt+Shift+A** starts or stops a test that switches Pacing off and on in 30-second turns.
+
+On Windows (or anywhere with Stats on), while a video of 45 frames a second or more is being converted, the browser's GPU thread is asked directly, and a beat is held as soon as it shows the hand-over stuck: a worker puts a question to the browser's GPU process that takes no work to answer, about thirty times a second, and times the answer. The answer has to come from the one thread that also hands redraws to Windows, so while a hand-over is stuck the answer arrives with the next screen refresh and not before. The report says how often that happened with pacing on and off, lists each time the hand-over was stuck (when, for how long, and how soon a beat followed), and has a small table of how long the answer took at each moment of the refresh, which shows at what moment the browser is busy handing over.
+
+It never draws the picture with more pixels than the video has (unless Performance is set to Best quality); the browser scales the smaller picture back up to fit.
 
 The extension also keeps its background work light while a video plays: looking for new video players happens in the browser's idle time, and the check for an HDR stream happens every few seconds.
 
@@ -189,7 +221,7 @@ The curves are eased over about a tenth of a second so the picture doesn't flick
 | Problem | Likely cause |
 |---|---|
 | Video stutters | Open the popup while it plays. The line under the title shows the frame rate and the share of frames dropped; hover it for the render size and which GPU is in use. Try **Performance: Fastest**. On a laptop with two GPUs, Chrome on Windows uses one for everything, usually the integrated one: set Chrome to "High performance" in Windows graphics settings, or enable `chrome://flags/#force-high-performance-gpu`, and restart it. If the status line says "busy page", lowering quality made no difference: the page itself is keeping the extension from drawing on time, and a lower video resolution is the remaining option. |
-| Stutter only in fullscreen | Switch on **Stats** and read the badge in fullscreen. If it shows frames being dropped or a long gap, the extension is falling behind there: try **Performance: Fastest**. If it shows 0% dropped and a gap close to one frame (17 ms at 60 fps, 42 ms at 24 fps), the extension is drawing every frame on time and the stutter comes from how the browser and display present them. Try **Frame timing: Every screen refresh**; if you use FreeSync or G-Sync, also try turning it off for your browser. This case is not fully understood yet: after it has happened, click **Report** in the popup and paste the result into a bug report. |
+| Stutter at 4K 60, worst in fullscreen, in the first seconds of a video or when the player's controls appear | The browser's screen queue getting stuck (see "Performance" under "How it works"). Check that **Hide original**, **Every refresh** and **Pacing** are all on. The extension clears it by itself when it sees it, by holding the page for a moment. If it keeps happening, the video's own 1440p setting is the dependable way out. Switch on **Stats**, play for a couple of minutes, click **Report** and paste the result into a bug report: it lists each time the extension held a beat or eased off, and whether that cleared it. |
 | The popup says a video is locked | Switch on **Unlock locked videos** for that site. If it then says the video couldn't be unlocked, that site's server refuses, and the video can't be converted. |
 | The popup says the extension isn't running on this page | The page was already open when the extension was installed, updated or reloaded. Refresh the page. (A few pages, such as the Chrome Web Store, never allow extensions.) |
 | No HDR badge appears | HDR is off in your OS display settings, the video is DRM-protected or already HDR, or the extension is off for this site. The popup's status line reports a missing HDR display or WebGPU. To find out which, click **Report** in the popup while on that page: the copied text names the reason for each video. |
@@ -203,7 +235,7 @@ The curves are eased over about a tenth of a second so the picture doesn't flick
 | Shortcuts do nothing | Assign them at `chrome://extensions/shortcuts`. |
 | Overlay is misaligned on one site | The site positions its video unusually. Use **Turn off here** for that site. |
 
-Messages from the extension appear in the page's DevTools console, prefixed `[SDR to HDR]`.
+Messages from the extension appear in the page's DevTools console, prefixed `[Headroom HDR]`.
 
 ## Permissions
 
@@ -211,6 +243,7 @@ Messages from the extension appear in the page's DevTools console, prefixed `[SD
 - **declarativeNetRequest**: used only by **Unlock locked videos**, and only on sites where you switch that on, to add the response headers that let a video be read.
 - **storage**: saves your settings, and a trained model if you load one, locally. Nothing is synced or sent anywhere.
 - **activeTab**: lets the popup read the current tab's hostname for per-site settings.
+- **One page any site may load** (`pacer.html`, a web-accessible resource): the frame that pacing runs in has to be loadable inside the page being watched. It holds nothing and does nothing but pace that page's own drawing; a site could tell from it that the extension is installed.
 
 The extension makes no network requests.
 
@@ -222,18 +255,27 @@ The extension makes no network requests.
 | `content.js` | Finds videos, manages the overlay canvas, badge and split handle, and runs the render loop. |
 | `shader.js` | The WGSL code for the shader pipeline. |
 | `model.js` | Checks a trained model file and runs it on the GPU. |
+| `diag.js` | The measuring behind the Report button: the hitch log, and the deeper checks that Stats switches on. |
+| `pacer.js` | The page's side of pacing (having the browser draw a few milliseconds into each refresh) and of asking the browser's GPU thread while Stats is on: makes the frame below, tells its workers what to do, keeps what they report. |
+| `cue.js` | The sound that says when to wiggle the mouse during the A/B test, and the popup's Test button for it. |
+| `pacer.html`, `pacer-frame.js` | The extension's own frame, one dot big and see-through, put into a page that is converting fast video. Its workers can't be started from the page itself on sites like YouTube. |
+| `pacer-worker.js` | The four workers in that frame: one paces, one asks the GPU thread, one keeps time for those two, one keeps the browser's timers fine. |
 | `model.html`, `model-page.js` | The page for loading or removing a trained model. |
 | `background.js` | Handles the keyboard shortcuts, and the header rules for unlocking videos. |
 | `popup.html`, `popup.js` | The settings popup. |
 | `calibrate.html`, `calibrate.js` | The display calibration page. |
 | `ui.css` | Shared styling for the popup and calibration page. |
-| `icons/` | Extension icons, with their SVG sources. |
+| `icons/` | Generated raster icon artwork, browser sizes and colour variants for the four themes. |
 | `CHANGELOG.md` | What changed in each version. |
 | `docs/` | Screenshots used in this README. |
 
 ## Testing status
 
 The pipeline was verified numerically in headless Chromium with software rendering: synthetic test frames in, measured pixel values out, for every feature. It has been used on a real HDR display with an RX 9070 XT, but picture tuning on real footage is by eye and limited to that one setup. Other GPUs and displays may need different settings.
+
+Smoothness was worked out on that same machine, in Brave on Windows 11, with 4K 60 fps video on YouTube in fullscreen, from the extension's own diagnostic reports. Headless Chromium can't stand in for that: its software GPU is too slow to play video in real time. So how smooth playback is on other hardware, other browsers and other sites is not known.
+
+Pacing was checked in headless Chromium on Linux with browser traces: the browser's drawing moved from 0.1 ms to between 5 and 6 ms into each refresh and back when switched; a page with nothing to redraw stayed undrawn; an answer that came too late cost that one refresh the wait and nothing after it; a worker that hung was ignored by the browser after ten refreshes; and on a page that forbids workers and frames it runs all the same, from the extension's own frame; with sleeps made to run over, it doesn't start and says why. A made-up stuck hand-over was recognised by the worker that asks the GPU thread, with the right moment in the refresh. What none of that can show is the thing it is for: whether a later hand-over keeps Windows from getting stuck. That had not been run on Windows when this was written, and neither had the two things 0.10.11 does for Windows alone (keeping the frame's process out of the background, and keeping its timers fine): those were read out of the browser's source.
 
 The trained-model path was checked the same way: fed a real video frame, the GPU version of the network gives the same numbers as the PyTorch original (to within 0.000001) on a random model; models with known answers produce the expected brightness on screen, including at the right place in the picture for a video that isn't 16:9. Failures were also injected on purpose (while starting, while drawing, and unreadable frames) to check that conversion recovers. How a real trained model looks, and how fast it runs on real hardware, had not been checked when this was written.
 

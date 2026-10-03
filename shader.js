@@ -1,11 +1,19 @@
-// WGSL for the SDR -> HDR pipeline. Six passes per frame:
+// WGSL for the SDR -> HDR pipeline. Seven passes per frame:
 //
-//   1. DOWN1  video -> L1 (480x270)   luminance, "is highlight" and "is clipped" masks
-//   2. DOWN   L1 -> L2 (120x68)       4x downsample
-//   3. DOWN   L2 -> L3 (30x17)        4x downsample
-//   4. DOWN   L3 -> L4 (8x5)          4x downsample
-//   5. SCENE  L3 -> 1x1               whole-frame average, smoothed over time
-//   6. MAIN   video + L1..L4 + scene -> HDR canvas
+//   1. COPY   video -> frame          the video frame as an ordinary texture
+//   2. DOWN1  frame -> L1 (480x270)   luminance, "is highlight" and "is clipped" masks
+//   3. DOWN   L1 -> L2 (120x68)       4x downsample
+//   4. DOWN   L2 -> L3 (30x17)        4x downsample
+//   5. DOWN   L3 -> L4 (8x5)          4x downsample
+//   6. SCENE  L3 -> 1x1               whole-frame average, smoothed over time
+//   7. MAIN   frame + L1..L4 + scene -> HDR canvas
+//
+// Why the copy: reading a pixel straight from a video frame is costly. The
+// browser has to fetch two planes (brightness and colour), convert them to
+// RGB and correct the colour space, every time. MAIN reads nine video pixels
+// for each pixel it draws, so at 4K that conversion was being done 75 million
+// times a frame. COPY does it once per pixel into a plain texture, and
+// everything after reads that, which is a single cheap fetch.
 //
 // Output is extended-range Display P3 (sRGB transfer curve, values above 1.0
 // are brighter than SDR white).
@@ -66,10 +74,25 @@ fn clipped(lin: vec3f) -> f32 {
 }
 `;
 
-// Pass 1: video -> L1. r = linear luminance, g = highlight mask, b = clipped mask.
-const SDR2HDR_DOWN1 = SDR2HDR_COMMON + /* wgsl */ `
+// Pass 1: the video frame -> an ordinary texture, at the video's resolution or
+// the size it will be drawn at, whichever is smaller. 10 bits a channel, so
+// nothing of an 8-bit video is lost.
+const SDR2HDR_FRAME_FORMAT = 'rgb10a2unorm';
+const SDR2HDR_COPY = SDR2HDR_COMMON + /* wgsl */ `
 @group(0) @binding(0) var samp: sampler;
 @group(0) @binding(1) var src: texture_external;
+
+@fragment
+fn fs(in: VOut) -> @location(0) vec4f {
+  let c = textureSampleBaseClampToEdge(src, samp, in.uv).rgb;
+  return vec4f(clamp(c, vec3f(0.0), vec3f(1.0)), 1.0);
+}
+`;
+
+// Pass 2: frame -> L1. r = linear luminance, g = highlight mask, b = clipped mask.
+const SDR2HDR_DOWN1 = SDR2HDR_COMMON + /* wgsl */ `
+@group(0) @binding(0) var samp: sampler;
+@group(0) @binding(1) var src: texture_2d<f32>;
 
 @fragment
 fn fs(in: VOut) -> @location(0) vec4f {
@@ -83,7 +106,7 @@ fn fs(in: VOut) -> @location(0) vec4f {
   for (var j = 0; j < 4; j++) {
     for (var i = 0; i < 4; i++) {
       let o = (vec2f(f32(i), f32(j)) - 1.5) * 0.5;
-      let lin = toLinear(textureSampleBaseClampToEdge(src, samp, in.uv + o * texel).rgb);
+      let lin = toLinear(textureSampleLevel(src, samp, in.uv + o * texel, 0.0).rgb);
       acc += wts[i] * wts[j] * vec3f(luma709(lin), smoothstep(0.45, 0.85, drive(lin)), clipped(lin));
     }
   }
@@ -91,7 +114,7 @@ fn fs(in: VOut) -> @location(0) vec4f {
 }
 `;
 
-// Passes 2 to 4: 4x downsample. Each output texel averages an 8x8 block of
+// Passes 3 to 5: 4x downsample. Each output texel averages an 8x8 block of
 // input texels (twice its own footprint) with tent-shaped weights.
 const SDR2HDR_DOWN = SDR2HDR_COMMON + /* wgsl */ `
 @group(0) @binding(0) var samp: sampler;
@@ -114,7 +137,7 @@ fn fs(in: VOut) -> @location(0) vec4f {
 }
 `;
 
-// Pass 5: whole-frame average, eased over time so the picture doesn't pump.
+// Pass 6: whole-frame average, eased over time so the picture doesn't pump.
 // A big jump (scene cut) snaps quickly instead of easing.
 const SDR2HDR_SCENE = SDR2HDR_COMMON + /* wgsl */ `
 struct S { reset: f32, dt: f32, p0: f32, p1: f32 };
@@ -142,11 +165,11 @@ fn fs(in: VOut) -> @location(0) vec4f {
 }
 `;
 
-// Pass 6: the actual SDR -> HDR conversion.
+// Pass 7: the actual SDR -> HDR conversion.
 const SDR2HDR_MAIN = SDR2HDR_COMMON + /* wgsl */ `
 struct U {
   scale: vec2f,     // quad scale for object-fit handling
-  texel: vec2f,     // size of one video pixel in uv
+  texel: vec2f,     // size of one pixel of the frame texture in uv
   peak: f32,        // peak brightness as a multiple of SDR white
   strength: f32,    // 0..1, how far down the tonal range expansion reaches
   sat: f32,         // colour boost (1 = none)
@@ -166,7 +189,7 @@ struct U {
 };
 @group(0) @binding(0) var<uniform> u: U;
 @group(0) @binding(1) var samp: sampler;
-@group(0) @binding(2) var src: texture_external;
+@group(0) @binding(2) var src: texture_2d<f32>;      // the video frame (see COPY)
 @group(0) @binding(3) var l1: texture_2d<f32>;
 @group(0) @binding(4) var l2: texture_2d<f32>;
 @group(0) @binding(5) var l3: texture_2d<f32>;
@@ -198,7 +221,7 @@ fn hash(p: vec2f) -> f32 {
 fn maxc(c: vec3f) -> f32 { return max(c.r, max(c.g, c.b)); }
 
 fn tap(uv: vec2f) -> vec3f {
-  return textureSampleBaseClampToEdge(src, samp, uv).rgb;
+  return textureSampleLevel(src, samp, uv, 0.0).rgb;
 }
 
 // Linear Rec.709 -> linear Display P3 (column-major).
@@ -311,8 +334,8 @@ fn clipDepth(uv: vec2f) -> f32 {
 fn fs(in: VOut) -> @location(0) vec4f {
   let enc = tap(in.uv);
 
-  // Sharpening and debanding each read 4 more video pixels per output pixel,
-  // which is most of this pass's cost. The light path skips both.
+  // Sharpening and debanding each read 4 more pixels of the frame per output
+  // pixel. The light path skips both.
   var smoothed = enc;
   if (u.lite < 0.5) {
     // Sharpen, contrast-adaptive (the idea behind AMD's CAS): look at the four

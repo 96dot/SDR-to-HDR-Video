@@ -12,7 +12,7 @@
 // next to each other: index = (y * width + x) * channels + channel.
 //
 // Passes per frame:
-//   prep     video -> 480x270 picture, the way the trainer made its inputs
+//   prep     video frame -> 480x270 picture, the way the trainer made its inputs
 //            (a video that isn't 16:9 sits in it with black bars, unstretched)
 //   e1 e2 e3 three shrinking convolutions            -> 240x135, 120x68, 60x34
 //   mean     average of each channel over the frame  (whole-frame context)
@@ -100,7 +100,7 @@ const SDR2HDR_MODEL_WGSL = {
 struct P { w: u32, h: u32, a: u32, b: u32, fit: vec2f, c: vec2f };
 @group(0) @binding(0) var<uniform> p: P;
 @group(0) @binding(1) var samp: sampler;
-@group(0) @binding(2) var src: texture_external;
+@group(0) @binding(2) var src: texture_2d<f32>;
 @group(0) @binding(3) var<storage, read_write> dst: array<f32>;
 
 fn toLinear(c: vec3f) -> vec3f {
@@ -121,7 +121,7 @@ fn main(@builtin(global_invocation_id) id: vec3u) {
       let uv = (spot - 0.5) / p.fit + 0.5;                                       // the same spot in the video
       // Sampled either way (the shader language wants that), counted only
       // when it lands on the picture; the rest is black bar.
-      let c = textureSampleBaseClampToEdge(src, samp, uv).rgb;
+      let c = textureSampleLevel(src, samp, clamp(uv, vec2f(0.0), vec2f(1.0)), 0.0).rgb;
       if (all(uv >= vec2f(0.0)) && all(uv <= vec2f(1.0))) {
         acc += toLinear(clamp(c, vec3f(0.0), vec3f(1.0)));
       }
@@ -362,6 +362,7 @@ async function sdr2hdrBuildModel(device, sampler, json) {
       const headUniform = uniform([w2, h2, c2, off.head.w, off.head.b, 0], [1, checked.bound]);
       const prepUniform = uniform([W, H, 0, 0], [1, 1, 0, 0]);
       const fitNow = new Float32Array([1, 1]);
+      let prepSrc = null, prepBind = null;
       const passes = [
         conv('e1', a0, a1, W, H, 3, w1, h1, c1, 2, 1),
         conv('e2', a1, a2, w1, h1, c1, w2, h2, c2, 2, 1),
@@ -381,12 +382,13 @@ async function sdr2hdrBuildModel(device, sampler, json) {
         model,
         input: a0,      // exposed so a test can feed the network directly
         output: prev,   // the curve map as numbers, [y][x][4]
-        // Add this frame's passes to a command encoder. ext is the video
-        // frame (leave it out to use whatever is already in the input array).
+        // Add this frame's passes to a command encoder. src is a view of
+        // the video frame as an ordinary texture (leave it out to use
+        // whatever is already in the input array).
         // alpha is how far to move toward this frame's answer, 0..1.
         // fit is the share of the network's 16:9 frame the video covers, as
         // [across, down] (see sdr2hdrModelFit).
-        encode(enc, ext, a, fit = [1, 1]) {
+        encode(enc, src, a, fit = [1, 1]) {
           alpha[0] = a;
           device.queue.writeBuffer(headUniform, 24, alpha);
           if (fit[0] !== fitNow[0] || fit[1] !== fitNow[1]) {
@@ -394,9 +396,15 @@ async function sdr2hdrBuildModel(device, sampler, json) {
             device.queue.writeBuffer(prepUniform, 16, fitNow);
           }
           const pass = enc.beginComputePass();
-          if (ext) {
+          if (src) {
+            // The frame texture only changes when the video's size does, so
+            // its bind group is kept from one frame to the next.
+            if (prepSrc !== src) {
+              prepSrc = src;
+              prepBind = group(pipes.prep, [prepUniform, sampler, src, a0]);
+            }
             pass.setPipeline(pipes.prep);
-            pass.setBindGroup(0, group(pipes.prep, [prepUniform, sampler, ext, a0]));
+            pass.setBindGroup(0, prepBind);
             pass.dispatchWorkgroups(...grid(W, H));
           }
           for (const p of passes) {
