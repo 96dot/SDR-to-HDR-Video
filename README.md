@@ -10,11 +10,6 @@ A Chromium extension that converts ordinary (SDR) web video to HDR in real time 
 
 It is in the same spirit as Nvidia's RTX Video HDR, but works on any GPU that supports WebGPU. It was built and tuned on an AMD Radeon RX 9070 XT.
 
-<p>
-  <img src="docs/popup-main.png" alt="The popup" width="300">
-  <img src="docs/popup-settings.png" alt="Settings and diagnostics, behind the cog" width="300">
-  <br><img src="docs/themes.png" alt="The four colour themes: Amber, Ocean, Rose, Aurora" width="620">
-</p>
 
 ## Requirements
 
