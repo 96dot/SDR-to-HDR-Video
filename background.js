@@ -120,19 +120,35 @@ chrome.tabs.onRemoved.addListener((tabId) => {
 const ICON_PALETTES = {
   amber: [[255, 197, 102], [255, 157, 60]],
   ocean: [[95, 240, 220], [58, 160, 255]],
-  rose: [[255, 143, 192], [192, 107, 255]],
   aurora: [[168, 146, 238], [242, 154, 198]],
 };
-const iconTheme = (name) => (name === 'custom' || Object.hasOwn(ICON_PALETTES, name) ? name : 'amber');
+const iconTheme = (name) => (name === 'custom' || name === 'match' || Object.hasOwn(ICON_PALETTES, name) ? name : 'amber');
 // The Custom theme's two colours (see theme.js).
 let iconCustom = [[124, 240, 192], [77, 124, 255]];
 const iconHex = (h) => { const m = /^#?([0-9a-f]{6})$/i.exec(h || ''); if (!m) return null; const n = parseInt(m[1], 16); return [n >> 16, (n >> 8) & 255, n & 255]; };
 const setIconCustom = (c) => { if (Array.isArray(c) && c.length === 2 && iconHex(c[0]) && iconHex(c[1])) iconCustom = [iconHex(c[0]), iconHex(c[1])]; };
+// The Match theme's one colour, and the second one worked out from it. Keep
+// this in step with matchPair in theme.js.
+let iconMatch = [255, 143, 192];
+const setIconMatch = (h) => { if (iconHex(h)) iconMatch = iconHex(h); };
+const iconMatchPair = () => {
+  const [r, g, b] = iconMatch.map((v) => v / 255);
+  const hi = Math.max(r, g, b), lo = Math.min(r, g, b), l = (hi + lo) / 2, d = hi - lo;
+  let h = 0;
+  if (d) h = hi === r ? ((g - b) / d) % 6 : hi === g ? (b - r) / d + 2 : (r - g) / d + 4;
+  h = (h * 60 + 75 + 360) % 360;
+  const s = d ? d / (1 - Math.abs(2 * l - 1)) : 0;
+  const l2 = l;
+  const k = (n) => (n + h / 30) % 12;
+  const f = (n) => Math.round(255 * (l2 - s * Math.min(l2, 1 - l2) * Math.max(-1, Math.min(k(n) - 3, 9 - k(n), 1))));
+  return [iconMatch, [f(0), f(8), f(4)]];
+};
+const iconPair = (name) => (name === 'custom' ? iconCustom : name === 'match' ? iconMatchPair() : ICON_PALETTES[name]);
 let iconBitmap = null;
 const iconVariants = new Map();
 
 function colourIcon(image, name) {
-  const [a, b] = name === 'custom' ? iconCustom : ICON_PALETTES[name];
+  const [a, b] = iconPair(name);
   const pixels = image.data;
   for (let i = 0; i < pixels.length; i += 4) {
     if (!pixels[i + 3]) continue;
@@ -157,7 +173,7 @@ function colourIcon(image, name) {
 }
 
 async function themedIcon(name) {
-  const key = name === 'custom' ? `custom:${iconCustom.join()}` : name;
+  const key = name === 'custom' || name === 'match' ? `${name}:${iconPair(name).join('|')}` : name;
   if (!iconVariants.has(key)) {
     const variant = (async () => {
       if (!iconBitmap) {
@@ -230,8 +246,9 @@ function chooseIconTheme(name) {
 async function restoreIconTheme() {
   const beforeRead = iconRevision;
   try {
-    const stored = await chrome.storage.local.get({ theme: 'amber', themeColours: null });
+    const stored = await chrome.storage.local.get({ theme: 'amber', themeColours: null, themeMatch: null });
     setIconCustom(stored.themeColours);
+    setIconMatch(stored.themeMatch);
     if (beforeRead === iconRevision) chooseIconTheme(stored.theme);
   } catch (e) {
     if (beforeRead === iconRevision) chooseIconTheme('amber');
@@ -240,8 +257,9 @@ async function restoreIconTheme() {
 
 let iconRestored = Promise.resolve();
 chrome.storage.onChanged.addListener(async (changes, area) => {
-  if (area !== 'local' || !(changes.theme || changes.themeColours)) return;
+  if (area !== 'local' || !(changes.theme || changes.themeColours || changes.themeMatch)) return;
   if (changes.themeColours) setIconCustom(changes.themeColours.newValue);
+  if (changes.themeMatch) setIconMatch(changes.themeMatch.newValue);
   if (changes.theme) { chooseIconTheme(changes.theme.newValue); return; }
   // Only the colours changed, so the theme is whatever it was. If this event
   // is what woke the worker, that isn't known yet: wait for the stored theme

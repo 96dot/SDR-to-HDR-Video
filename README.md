@@ -2,7 +2,7 @@
 
 (Called "SDR to HDR Video" before 0.11.) The name is the thing it uses: the brightness above white that an HDR display has to spare.
 
-**The popup.** Picture controls up front. The cog opens settings: colour theme (Amber, Ocean, Rose, the old pastel Aurora, or Custom: two colours of your own), the three playback switches that are best left on (each says what is recommended), and diagnostics (Stats, Copy report, the wiggle sound, and the test keys).
+**The popup.** Picture controls up front. The cog opens settings: colour theme (Amber, Ocean, the old pastel Aurora, Match: one colour of your own with a second worked out to go with it, or Custom: two colours of your own), the three playback switches that are best left on (each says what is recommended), and diagnostics (Stats, Copy report, the wiggle sound, and the test keys).
 
 The selected theme controls the popup colours and the generated highlight icon in its header and the browser toolbar. The browser's extensions list keeps the default icon.
 

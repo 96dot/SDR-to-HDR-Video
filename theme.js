@@ -1,30 +1,49 @@
 // The colour theme, chosen in the popup's settings. Put on <html> as early as
 // it can be, on every page of the extension, so the page doesn't flash in
 // another one first.
-const HEADROOM_THEMES = { amber: 'Amber', ocean: 'Ocean', rose: 'Rose', aurora: 'Aurora', custom: 'Custom' };
+const HEADROOM_THEMES = { amber: 'Amber', ocean: 'Ocean', aurora: 'Aurora', match: 'Match', custom: 'Custom' };
 // These palettes and the pixel transform match background.js so the popup
 // and browser toolbar show the same themed glass icon.
 const HEADROOM_ICON_PALETTES = {
   amber: [[255, 197, 102], [255, 157, 60]],
   ocean: [[95, 240, 220], [58, 160, 255]],
-  rose: [[255, 143, 192], [192, 107, 255]],
   aurora: [[168, 146, 238], [242, 154, 198]],
 };
 const themeName = (name) => Object.hasOwn(HEADROOM_THEMES, name) ? name : 'amber';
 
-// The Custom theme: two colours of the user's own, from which everything
+// The Custom and Match themes: colours of the user's own, from which everything
 // else is worked out (glow, the light behind the glass, a dark page tinted
 // with the first, and whether text on the accent should be dark or light).
 const HEADROOM_CUSTOM_DEFAULT = ['#7cf0c0', '#4d7cff'];
 let customColours = HEADROOM_CUSTOM_DEFAULT.slice();
 const hexRgb = (h) => { const m = /^#?([0-9a-f]{6})$/i.exec(h || ''); if (!m) return null; const n = parseInt(m[1], 16); return [n >> 16, (n >> 8) & 255, n & 255]; };
 const validColours = (c) => (Array.isArray(c) && c.length === 2 && hexRgb(c[0]) && hexRgb(c[1]) ? [c[0], c[1]] : null);
-const paletteOf = (name) => (name === 'custom' ? customColours.map(hexRgb) : HEADROOM_ICON_PALETTES[name]);
+// The Match theme: one colour of the user's own; the second is worked out
+// from it (turned 75 degrees round the colour wheel, about as far as Aurora
+// does, at the same lightness), so the pair always goes together. Keep this in
+// step with background.js.
+const HEADROOM_MATCH_DEFAULT = '#ff8fc0';
+let matchColour = HEADROOM_MATCH_DEFAULT;
+const matchPair = (hex) => {
+  const [r, g, b] = (hexRgb(hex) || hexRgb(HEADROOM_MATCH_DEFAULT)).map((v) => v / 255);
+  const hi = Math.max(r, g, b), lo = Math.min(r, g, b), l = (hi + lo) / 2, d = hi - lo;
+  let h = 0;
+  if (d) h = hi === r ? ((g - b) / d) % 6 : hi === g ? (b - r) / d + 2 : (r - g) / d + 4;
+  h = (h * 60 + 75 + 360) % 360;
+  const s = d ? d / (1 - Math.abs(2 * l - 1)) : 0;
+  const l2 = l;
+  const k = (n) => (n + h / 30) % 12;
+  const f = (n) => Math.round(255 * (l2 - s * Math.min(l2, 1 - l2) * Math.max(-1, Math.min(k(n) - 3, 9 - k(n), 1))));
+  return [hexRgb(hex) || hexRgb(HEADROOM_MATCH_DEFAULT), [f(0), f(8), f(4)]];
+};
+const hexOf = (c) => '#' + c.map((v) => v.toString(16).padStart(2, '0')).join('');
+const pairOf = (name) => (name === 'custom' ? customColours.map(hexRgb) : name === 'match' ? matchPair(matchColour) : null);
+const paletteOf = (name) => pairOf(name) || HEADROOM_ICON_PALETTES[name];
 const CUSTOM_VARS = ['--ink-a', '--ink-b', '--accent-a', '--accent-b', '--glow', '--on-accent', '--focus', '--blob1', '--blob2', '--blob3', '--blob4', '--page', '--edge', '--shine'];
-function applyCustomVars(on) {
+function applyCustomVars(pair) {
   const st = document.documentElement.style;
-  if (!on) { for (const v of CUSTOM_VARS) st.removeProperty(v); return; }
-  const [a, b] = customColours.map(hexRgb);
+  if (!pair) { for (const v of CUSTOM_VARS) st.removeProperty(v); return; }
+  const [a, b] = pair;
   const mix = (x, y, t) => x.map((v, i) => Math.round(v + (y[i] - v) * t));
   const css = (c, alpha) => (alpha == null ? `rgb(${c.join(',')})` : `rgba(${c.join(',')},${alpha})`);
   const lum = (c) => (0.2126 * c[0] + 0.7152 * c[1] + 0.0722 * c[2]) / 255;
@@ -81,7 +100,7 @@ function colourThemeLogo(image, name) {
 }
 
 function themeLogo(name) {
-  const key = name === 'custom' ? `custom:${customColours.join()}` : name;
+  const key = pairOf(name) ? `${name}:${pairOf(name).join('|')}` : name;
   if (!themeLogos.has(key)) {
     const logo = (async () => {
       if (!logoSource) {
@@ -120,12 +139,13 @@ async function applyThemeLogo(name, revision) {
   }
 }
 
-function applyTheme(name, colours) {
+function applyTheme(name, colours, match) {
   name = themeName(name);
   const c = validColours(colours);
   if (c) { customColours = c; try { localStorage.setItem('themeColours', JSON.stringify(c)); } catch (e) {} }
+  if (hexRgb(match)) { matchColour = match; try { localStorage.setItem('themeMatch', match); } catch (e) {} }
   document.documentElement.dataset.theme = name;
-  applyCustomVars(name === 'custom');
+  applyCustomVars(pairOf(name));
   const revision = ++themeRevision;
   try { localStorage.setItem('theme', name); } catch (e) {}
   void applyThemeLogo(name, revision);
@@ -136,15 +156,20 @@ document.addEventListener('DOMContentLoaded', () => {
 }, { once: true });
 
 let remembered = 'amber';
-try { remembered = localStorage.getItem('theme'); customColours = validColours(JSON.parse(localStorage.getItem('themeColours'))) || customColours; } catch (e) {}
+try {
+  remembered = localStorage.getItem('theme');
+  customColours = validColours(JSON.parse(localStorage.getItem('themeColours'))) || customColours;
+  const m = localStorage.getItem('themeMatch');
+  if (hexRgb(m)) matchColour = m;
+} catch (e) {}
 applyTheme(remembered);
 try {
   chrome.storage.onChanged.addListener((c, area) => {
-    if (area !== 'local' || !(c.theme || c.themeColours)) return;
-    applyTheme(c.theme ? c.theme.newValue : document.documentElement.dataset.theme, c.themeColours ? c.themeColours.newValue : null);
+    if (area !== 'local' || !(c.theme || c.themeColours || c.themeMatch)) return;
+    applyTheme(c.theme ? c.theme.newValue : document.documentElement.dataset.theme, c.themeColours ? c.themeColours.newValue : null, c.themeMatch ? c.themeMatch.newValue : null);
   });
   const beforeRead = themeRevision;
-  chrome.storage.local.get({ theme: 'amber', themeColours: null }, (o) => {
-    if (beforeRead === themeRevision && o) applyTheme(o.theme, o.themeColours);
+  chrome.storage.local.get({ theme: 'amber', themeColours: null, themeMatch: null }, (o) => {
+    if (beforeRead === themeRevision && o) applyTheme(o.theme, o.themeColours, o.themeMatch);
   });
 } catch (e) {}
