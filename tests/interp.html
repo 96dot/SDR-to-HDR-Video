@@ -18,5 +18,5 @@ async function setup() {
   return { gpu, pipes };
 }
 window.ready = setup().then((s) => { window.S = s; return true; });
-window.runSelfTest = async (mx, my, t) => sdr2hdrInterpSelfTest(S.gpu, S.pipes, mx, my, t);
+window.runSelfTest = async (mx, my, t, pattern, noise, dbg) => sdr2hdrInterpSelfTest(S.gpu, S.pipes, mx, my, t, pattern, noise, dbg);
 </script>

@@ -746,9 +746,10 @@
       this.ipWhy = '';          // why not, for the report
       this.sched = new Sdr2hdrSchedule();   // when to show what (see interp.js)
       this.ipShown = null;      // the last picture put on screen while interpolating: { sl }
-      this.ipStat = { frames: 0, made: 0, late: 0, resyncs: 0, jumps: 0, skipped: 0, since: 0, work: [], gpu: [] };
+      this.ipStat = { frames: 0, made: 0, late: 0, resyncs: 0, jumps: 0, skipped: 0, since: 0, work: [], gpu: [], miss: [], fast: [], cuts: 0, partial: 0, measured: 0 };
       this.motion = null;       // the flow between the two frames (see interp.js)
       this.midSlot = null;      // the texture the made-up pictures are drawn into
+      this.ipSeen = [];         // spare buffers for reading back what the motion looked like (see interpAdvance)
       this.seenTs = null;       // timestamp of the video frame last copied
       this.held = 0;            // frames of the video handed to the GPU and not yet finished with
       this.heldSeen = new Array(9).fill(0);   // how many were waiting each time a frame was taken (8 = eight or more)
@@ -2121,7 +2122,7 @@
         this.ipOn = on;
         this.ipWhy = why;
         if (changed) {
-          if (on) this.ipStat = { frames: 0, made: 0, late: 0, resyncs: 0, jumps: 0, skipped: 0, since: performance.now(), work: [], gpu: [] };
+          if (on) this.ipStat = { frames: 0, made: 0, late: 0, resyncs: 0, jumps: 0, skipped: 0, since: performance.now(), work: [], gpu: [], miss: [], fast: [], cuts: 0, partial: 0, measured: 0 };
           note(on
             ? `${nameOf(this.video)}: making up the pictures between frames (${this.srcFps.toFixed(1)} frames a second on a ${(1000 / this.tickMs).toFixed(0)} Hz screen)`
             : `${nameOf(this.video)}: not making up pictures between frames${why === 'switched off' ? '' : `, because ${why}`}`);
@@ -2177,11 +2178,17 @@
       const tq = this.gpu.canTime && st.frames % 4 === 0 ? this.timer() : null;
       const enc = device.createCommandEncoder();
       const flowed = this.motion.advance(enc, sl, tq);
-      let readback = null;
+      let readback = null, seen = null;
       if (tq) {
         readback = tq.free.pop() || device.createBuffer({ size: 16, usage: GPUBufferUsage.MAP_READ | GPUBufferUsage.COPY_DST });
         enc.resolveQuerySet(tq.set, 0, 2, tq.resolve, 0);
         enc.copyBufferToBuffer(tq.resolve, 0, readback, 0, 16);
+        // What the motion looked like, from the same frame: how badly the
+        // frame matched and how fast things moved (see SDR2HDR_CUT).
+        if (flowed) {
+          seen = this.ipSeen.pop() || device.createBuffer({ size: 256, usage: GPUBufferUsage.MAP_READ | GPUBufferUsage.COPY_DST });
+          enc.copyTextureToBuffer({ texture: this.motion.cut.tex }, { buffer: seen, bytesPerRow: 256 }, [1, 1]);
+        }
       }
       const at = performance.now();
       device.queue.submit([enc.finish()]);
@@ -2190,6 +2197,23 @@
         w.push(performance.now() - at);
         if (w.length > 64) w.shift();
       }, () => {});
+      if (seen) {
+        seen.mapAsync(GPUMapMode.READ).then(() => {
+          const h = new Uint16Array(seen.getMappedRange().slice(0, 8));
+          seen.unmap();
+          if (this.dead) { seen.destroy(); return; }
+          this.ipSeen.push(seen);
+          const miss = sdr2hdrHalf(h[0]), fast = sdr2hdrHalf(h[1]);
+          if (Number.isFinite(miss) && Number.isFinite(fast)) {
+            st.measured++;
+            if (miss > 0.10) st.cuts++;
+            else if (miss > 0.07) st.partial++;
+            st.miss.push(miss);
+            st.fast.push(fast);
+            if (st.miss.length > 64) { st.miss.shift(); st.fast.shift(); }
+          }
+        }, () => { try { seen.destroy(); } catch (e) {} });
+      }
       if (readback) {
         tq.out++;
         readback.mapAsync(GPUMapMode.READ).then(() => {
@@ -2315,11 +2339,14 @@
       const secs = Math.max(0.001, (performance.now() - st.since) / 1000);
       const w = [...st.work].sort((a, b) => a - b);
       const g = [...st.gpu].sort((a, b) => a - b);
+      const ms = [...st.miss].sort((a, b) => a - b);
+      const fa = [...st.fast].sort((a, b) => a - b);
       const mid = (a) => (a.length ? a[a.length >> 1] : NaN);
       const n = (x, d = 1) => (Number.isFinite(x) ? x.toFixed(d) : '-');
       return [
         `Smooth motion: on. ${this.srcFps.toFixed(1)} frames a second on a ${n(1000 / this.tickMs, 0)} Hz screen; the picture runs one video frame (${n(1000 / this.srcFps, 0)} ms) behind the sound.${check}`,
         `  Since it came on (${n(secs, 0)} s): ${st.frames} video frames, ${st.made} pictures made up, ${st.late} frames came more than 20 ms late (the last picture was held), ${st.skipped} were skipped to catch up, ${st.resyncs} times the clock was started again (a frame too far behind), ${st.jumps} gaps (a seek or a stall) not made up across.`,
+        `  What the motion looked like (read from the GPU for one frame in four; ${st.measured} so far): ${st.miss.length ? `the match was off by ${n(mid(ms), 3)} typically and ${n(ms[Math.max(0, Math.ceil(ms.length * 0.95) - 1)], 3)} in the worst twentieth (0.07 and above is partly taken for a cut, 0.10 and above wholly); ${st.cuts} of ${st.measured} frames were taken for a cut and ${st.partial} partly; the fastest thing moved ${n(mid(fa), 0)} px typically and ${n(fa[fa.length - 1], 0)} px at most on a grid 480 wide (it can follow about 57)` : 'nothing read back yet'}.`,
         `  Working out the motion for a new frame: ${g.length ? `${n(mid(g))} ms typically and ${n(g[g.length - 1])} ms at most on the GPU, timed by the GPU itself (it gives up at half a frame)` : 'not timed on the GPU (this GPU cannot be, or too few measured yet)'}; as the page saw it, waiting for everything queued before it too, ${n(mid(w))} ms typically and ${n(w.length ? w[w.length - 1] : NaN)} ms at most. The view for judging it (Alt+Shift+I with Stats on): ${INTERP_VIEWS[interpView]}.`,
       ];
     }
@@ -2602,6 +2629,7 @@
       for (const sl of this.slots || []) sl.tex.destroy();
       this.dropMid();
       if (this.motion) this.motion.destroy();
+      for (const b of this.ipSeen) b.destroy();
       this.dropUp();
       this.dropNN();
       for (const t of this.textures || []) t.destroy();

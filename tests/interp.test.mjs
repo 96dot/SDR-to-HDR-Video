@@ -38,6 +38,18 @@ for (const [name, mx, my] of cases) {
   const r = await page.evaluate(([a, b]) => window.runSelfTest(a, b), [mx, my]);
   check(`flow and picture: ${name}`, r.ok, `flow error ${r.flowMedian.toFixed(2)} px typical, ${r.flowErr.toFixed(2)} mean, ${(r.flowGood * 100).toFixed(0)}% within 1 px; picture error ${(r.midErr * 100).toFixed(2)}%; ${r.ms.toFixed(0)} ms`);
 }
+// A pan across a scene (flat sky, sharp horizon, textured ground, posts) with
+// noise that is new every frame, as compression leaves. What slides in at the
+// side of the picture is in one frame only, and the picture there must be made
+// from that one frame (it was smeared from the edge pixels before 1.3.2).
+for (const [name, px, pattern] of [['pan 30 px', 30, 1], ['pan -30 px', -30, 1], ['pan 50 px', 50, 1], ['pan 20 px with posts moving twice as far (parallax)', 20, 2]]) {
+  const r = await page.evaluate(([a, p]) => window.runSelfTest(a / 512, 0, 0.5, p, 0.02), [px, pattern]);
+  const g = await page.evaluate(([a, p]) => window.runSelfTest(a / 512, 0, 0.5, p, 0.02, 3), [px, pattern]);
+  const b = r.bands;
+  check(`scene: ${name}: picture, sides, and the share that falls back`, r.midErr < 0.025 && b.left < 0.06 && b.right < 0.06 && b.horizon < 0.04 && g.fellBack < 0.05,
+    `picture ${(r.midErr * 100).toFixed(2)}%, left side ${(b.left * 100).toFixed(1)}%, right side ${(b.right * 100).toFixed(1)}%, horizon ${(b.horizon * 100).toFixed(1)}%, ${(g.fellBack * 100).toFixed(1)}% fell back to a real frame`);
+}
+
 // A cut: the second frame is the first moved far beyond what can be matched.
 // The picture between them should be one frame or the other as it is, not a
 // blend of the two.

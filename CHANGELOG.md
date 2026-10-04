@@ -2,6 +2,29 @@
 
 All notable changes to Headroom HDR (called SDR to HDR Video before 0.11). Versions follow the number in `manifest.json`.
 
+## 1.3.2 - 2026-10-04
+
+### Fixed
+
+- **The edges of the picture during a pan.** What slides in at the side of the picture on a pan is in one of the two frames only. The made-up picture read both frames anyway, and for the one that did not have it the sampler repeated the last column of pixels, smearing the edge across the width of the move (at 4K and 100 px a frame, a streak 50 px wide). A made-up picture now uses only the frame that has the content where one of the two places to read from is outside the picture. On a made-up pan across a scene (sky, horizon, textured ground, posts, with noise new in every frame) the error in the outermost columns went from 7 to 10% to about 1% on the side the content leaves and about 4% on the side it enters; the middle of the picture is about 1%.
+- **Where the motion found at one place cannot be trusted, the picture now falls back on the motion most of the frame agrees on** (a pan) before it falls back on the nearer real frame. The nearer real frame is un-moved, so a patch of it next to made-up picture is half a move out of place: a seam, and on a pan that looks like tearing. Now a patch is only that when the overall motion is no good either (a cut, or something moving against the whole picture).
+
+### Added
+
+- **What the motion looked like on your video**, in the report's Smooth motion section (with Stats on): how badly the frames matched (typically and in the worst twentieth; 0.07 and above is partly treated as a cut, 0.10 and above wholly), how many frames were taken for a cut or partly, and how fast the fastest thing moved (it can follow about 57 px on a grid 480 wide, about 12% of the frame's width a frame). Read from the GPU for one frame in four. If the report says a lot of frames are taken for cuts during a pan, the thresholds are wrong for that footage; if the fastest motion is near or over 57 px, the pan is faster than the search can follow.
+- Alt+Shift+I's views are unchanged (the picture, red where it fell back to a real frame, the motion found). With this change red means a real frame was used instead of a made-up picture; places that use the overall motion are not red.
+- Tests: a pan across a scene, with the sides checked, and a case with posts moving at twice the speed (parallax).
+
+### Found and not changed
+
+- I could not make the tearing reported on panning shots appear in made-up pans on a software GPU, other than the edge streaks fixed above. Real footage has things the test pictures do not (parallax from depth, motion blur, grain, compression blocks, repeating patterns, things moving against the pan). The report's new motion read-out, and Alt+Shift+I on a pan, are how to tell which it is.
+- 35 frames in 950 came more than 20 ms late in the earlier report (about one a second), with the drawing at twice the rate. A small buffer in the clock (a refresh, adding about 16 ms to the picture's delay behind the sound) would absorb most of that; not done until it is clear that is what you are seeing.
+
+### Tested, and not
+
+- Checked here: the pan, parallax and edge cases above on a software GPU against the true picture (picture error 0.8 to 1.3%, sides under 4.5%, about 1% of the picture falling back to a real frame); all the earlier shader and timing tests; the new report line running in the extension in headless Chromium (it reads the motion's measurements back and shows them; on the software test video it rightly flagged motion beyond the search's reach).
+- Not checked: whether any of this removes the tearing you saw. It may not: the cause on real footage is not established.
+
 ## 1.3.1 - 2026-10-04
 
 ### Fixed

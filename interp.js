@@ -108,22 +108,37 @@ fn fs(in: VOut) -> @location(0) vec4f {
 }
 `;
 
-// Is this a cut? The mean of how badly the coarsest level matched, over the
-// whole frame: a real motion leaves most of the frame matching well, a cut
-// leaves none of it. One value, which MIX reads.
+// Two numbers about the frame as a whole, from the coarsest level of the flow:
+// how badly it matched (a cut leaves none of it matching, a real motion most
+// of it), and the motion most of it agrees on (a pan, say), taken as the
+// average of the motions found, the better the match the more it counts. MIX
+// reads both: the first to tell a cut, the second to fall back on where the
+// motion found at one place is not to be trusted.
+// rg = the mean mismatch and the largest motion (in pixels of the finest
+// level), ba = the overall motion as a fraction of the frame.
 const SDR2HDR_CUT = SDR2HDR_COMMON + /* wgsl */ `
 @group(0) @binding(0) var coarse: texture_2d<f32>;
 
 @fragment
 fn fs(in: VOut) -> @location(0) vec4f {
   let d = vec2i(textureDimensions(coarse));
-  var sum = 0.0;
+  var cost = 0.0;
+  var wsum = 0.0;
+  var fsum = vec2f(0.0);
+  var fastest = 0.0;
+  let grid = vec2f(${SDR2HDR_FLOW_LEVELS[0][0]}.0, ${SDR2HDR_FLOW_LEVELS[0][1]}.0);
   for (var y = 0; y < d.y; y++) {
     for (var x = 0; x < d.x; x++) {
-      sum += textureLoad(coarse, vec2i(x, y), 0).z;
+      let t = textureLoad(coarse, vec2i(x, y), 0);
+      cost += t.z;
+      let w = 1.0 / (0.01 + t.z * t.z * 100.0);
+      wsum += w;
+      fsum += w * t.xy;
+      fastest = max(fastest, length(t.xy * grid));
     }
   }
-  return vec4f(sum / f32(d.x * d.y), 0.0, 0.0, 1.0);
+  let n = f32(d.x * d.y);
+  return vec4f(cost / n, fastest, fsum / wsum);
 }
 `;
 
@@ -139,6 +154,28 @@ struct P { t: f32, dbg: f32, p0: f32, p1: f32 };
 @group(0) @binding(4) var<uniform> pr: P;
 @group(0) @binding(5) var cut: texture_2d<f32>;
 
+struct Shifted { rgb: vec3f, diff: f32, both: bool };
+
+// The picture at t between the two frames, if everything at uv moves by f: A
+// read at uv + t f, B at uv - (1 - t) f, blended; where one of the two is
+// outside the frame, only the other. diff: how much the two disagree.
+fn shift(f: vec2f, uv: vec2f) -> Shifted {
+  let ua = uv + pr.t * f;
+  let ub = uv - (1.0 - pr.t) * f;
+  let a = textureSampleLevel(fa, samp, ua, 0.0).rgb;
+  let b = textureSampleLevel(fb, samp, ub, 0.0).rgb;
+  let inA = all(ua >= vec2f(0.0)) && all(ua <= vec2f(1.0));
+  let inB = all(ub >= vec2f(0.0)) && all(ub <= vec2f(1.0));
+  var o: Shifted;
+  o.both = inA && inB;
+  o.diff = max(abs(a.r - b.r), max(abs(a.g - b.g), abs(a.b - b.b)));
+  o.rgb = mix(a, b, pr.t);
+  if (!inA && inB) { o.rgb = b; }
+  else if (inA && !inB) { o.rgb = a; }
+  else if (!inA && !inB) { o.rgb = mix(a, b, pr.t); o.both = true; o.diff = 1.0; }
+  return o;
+}
+
 fn hue(h: f32) -> vec3f {
   let k = vec3f(5.0, 3.0, 1.0) + h * 6.0;
   return clamp(abs((k - floor(k / 6.0) * 6.0) - 3.0) - 1.0, vec3f(0.0), vec3f(1.0));
@@ -147,21 +184,32 @@ fn hue(h: f32) -> vec3f {
 @fragment
 fn fs(in: VOut) -> @location(0) vec4f {
   let fl = textureSampleLevel(flow, samp, in.uv, 0.0);
-  let f = fl.xy;
-  let a = textureSampleLevel(fa, samp, in.uv + pr.t * f, 0.0).rgb;
-  let b = textureSampleLevel(fb, samp, in.uv - (1.0 - pr.t) * f, 0.0).rgb;
+  let cutv = textureLoad(cut, vec2i(0, 0), 0);
   let near = select(textureSampleLevel(fb, samp, in.uv, 0.0).rgb,
                     textureSampleLevel(fa, samp, in.uv, 0.0).rgb, pr.t < 0.5);
-  // The two guesses at the same place should look alike; if they don't, the
-  // motion was wrong here.
-  // Also where even the best match found was a poor one (fl.z): a scene
-  // cut, or something that moved further than can be followed.
-  let w0 = max(smoothstep(0.08, 0.22, max(abs(a.r - b.r), max(abs(a.g - b.g), abs(a.b - b.b)))),
-               smoothstep(0.03, 0.08, fl.z));
+
+  // Tier 1: the motion found at this place. Tier 2: the motion most of the
+  // picture agrees on (cutv.ba), for where tier 1 cannot be trusted. Tier 3:
+  // the nearer real frame, as it is.
+  let loc = shift(fl.xy, in.uv);
+  let glo = shift(cutv.ba, in.uv);
+
+  // Where the local motion is in doubt: its match was poor (fl.z), or the two
+  // pictures it makes disagree.
+  let wl = max(select(0.0, smoothstep(0.08, 0.22, loc.diff), loc.both), smoothstep(0.03, 0.08, fl.z));
+  // Where even the overall motion gives two pictures that disagree. Where one
+  // of the two places to read from is outside the frame (a pan: what slides
+  // in at the edge is in one frame only) the other is all there is.
+  let wg = select(0.0, smoothstep(0.08, 0.22, glo.diff), glo.both);
   // And everywhere, if the frame as a whole did not match: a cut.
-  let w = max(w0, smoothstep(0.07, 0.10, textureLoad(cut, vec2i(0, 0), 0).r));
-  var o = mix(mix(a, b, pr.t), near, w);
-  if (pr.dbg > 1.5) {
+  let wc = smoothstep(0.07, 0.10, cutv.r);
+
+  let tier = mix(loc.rgb, glo.rgb, wl);
+  let w = max(max(wg * wl, wc), 0.0);
+  let base = tier;
+  let f = fl.xy;
+  var o = mix(base, near, w);
+  if (pr.dbg > 1.5 && pr.dbg < 2.5) {
     let m = f * vec2f(${SDR2HDR_FLOW_LEVELS[0][0]}.0, ${SDR2HDR_FLOW_LEVELS[0][1]}.0);
     let len = length(m);
     let ang = atan2(m.y, m.x) / 6.2831853 + 0.5;
@@ -169,6 +217,7 @@ fn fs(in: VOut) -> @location(0) vec4f {
   } else if (pr.dbg > 0.5) {
     o = mix(o, vec3f(1.0, 0.1, 0.1), w * 0.85);
   }
+  if (pr.dbg > 2.5) { o = vec3f(w); }
   return vec4f(o, 1.0);
 }
 `;
@@ -176,7 +225,7 @@ fn fs(in: VOut) -> @location(0) vec4f {
 // Made-up frames for the self-check: smooth noise with a shift. Moving the
 // same noise by a known amount gives a pair whose true motion is exact.
 const SDR2HDR_TESTCARD = SDR2HDR_COMMON + /* wgsl */ `
-struct T { shift: vec2f, size: vec2f };
+struct T { shift: vec2f, size: vec2f, kind: vec4f };
 @group(0) @binding(0) var<uniform> tc: T;
 
 fn h2(p: vec2f) -> f32 {
@@ -192,9 +241,25 @@ fn vnoise(p: vec2f) -> f32 {
 fn fs(in: VOut) -> @location(0) vec4f {
   // Position in pixels of the frame, moved by the shift.
   let p = (in.uv - tc.shift) * tc.size;
-  let n = 0.4 * vnoise(p / 64.0) + 0.3 * vnoise(p / 24.0) + 0.2 * vnoise(p / 9.0) + 0.1 * vnoise(p / 3.0);
-  // Pushed apart, so that there are real edges to follow (and to get wrong).
-  let c = 0.075 + 0.85 * smoothstep(0.35, 0.65, n);
+  var c: f32;
+  if (tc.kind.x < 0.5) {
+    let n = 0.4 * vnoise(p / 64.0) + 0.3 * vnoise(p / 24.0) + 0.2 * vnoise(p / 9.0) + 0.1 * vnoise(p / 3.0);
+    // Pushed apart, so that there are real edges to follow (and to get wrong).
+    c = 0.075 + 0.85 * smoothstep(0.35, 0.65, n);
+  } else {
+    // A scene to pan across: flat sky with a few soft clouds, a sharp
+    // horizon, textured ground, and posts standing on it.
+    let hy = tc.size.y * 0.45;
+    let sky = 0.80 - 0.25 * (p.y / hy) + 0.04 * vnoise(p / 90.0);
+    let ground = 0.20 + 0.55 * smoothstep(0.30, 0.70, 0.5 * vnoise(p / 30.0) + 0.3 * vnoise(p / 11.0) + 0.2 * vnoise(p / 4.0));
+    // (With pattern 2 the posts are near the camera and move twice as far.)
+    let q = select(p, (in.uv - tc.shift * 2.0) * tc.size, tc.kind.x > 1.5);
+    let post = step(abs(fract(q.x / 97.0) - 0.5), 0.03) * step(hy - 60.0, p.y) * step(p.y, hy + 10.0);
+    c = mix(sky, ground, step(hy, p.y));
+    c = mix(c, 0.05, post);
+  }
+  // Noise that is new every frame (what compression leaves behind).
+  c = c + tc.kind.y * (h2(in.uv * tc.size + vec2f(tc.kind.z, tc.kind.z * 1.7)) - 0.5);
   return vec4f(c, c * 0.9 + 0.05, 1.0 - c * 0.8, 1.0);
 }
 `;
@@ -424,7 +489,7 @@ const sdr2hdrHalf = (h) => {
 // at t = 0.5 and compares them with what is known to be true.
 // Returns { ok, flowErr, flowSize, midErr, ms, why } with errors in pixels of
 // the flow grid (flowErr) and in 0 to 1 colour (midErr), or throws.
-async function sdr2hdrInterpSelfTestRun(gpu, pipes, mx, my, t, own) {
+async function sdr2hdrInterpSelfTestRun(gpu, pipes, mx, my, t, own, pattern, noise, dbg) {
   const { device } = gpu;
   const W = 512, H = 288;
   const began = performance.now();
@@ -433,10 +498,10 @@ async function sdr2hdrInterpSelfTestRun(gpu, pipes, mx, my, t, own) {
   const [FW, FH] = SDR2HDR_FLOW_LEVELS[0];     // the grid the flow is on
   const frame = () => { const t = device.createTexture({ size: [W, H], format: SDR2HDR_FRAME_FORMAT, usage }); keep.push(t); return { tex: t, view: t.createView() }; };
   const A = frame(), B = frame(), E = frame(), M = frame();
-  const card = (target, sx, sy) => {
-    const ub = device.createBuffer({ size: 16, usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST });
+  const card = (target, sx, sy, seed = 0) => {
+    const ub = device.createBuffer({ size: 32, usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST });
     keep.push(ub);
-    device.queue.writeBuffer(ub, 0, new Float32Array([sx, sy, W, H]));
+    device.queue.writeBuffer(ub, 0, new Float32Array([sx, sy, W, H, pattern, noise, seed, 0]));
     const bind = device.createBindGroup({ layout: pipes.card.getBindGroupLayout(0), entries: [{ binding: 0, resource: { buffer: ub } }] });
     const enc = device.createCommandEncoder();
     const rp = enc.beginRenderPass({ colorAttachments: [{ view: target.view, loadOp: 'clear', storeOp: 'store' }] });
@@ -445,9 +510,9 @@ async function sdr2hdrInterpSelfTestRun(gpu, pipes, mx, my, t, own) {
   };
   // A is the noise as it is; B is the same noise moved by (mx, my); the
   // truth at t is the noise moved t of the way.
-  card(A, 0, 0);
-  card(B, mx, my);
-  card(E, mx * t, my * t);
+  card(A, 0, 0, 1);
+  card(B, mx, my, 2);
+  card(E, mx * t, my * t, 3);
   for (const s of [A, B]) s.bgDown1 = device.createBindGroup({ layout: gpu.down1.getBindGroupLayout(0), entries: [{ binding: 0, resource: gpu.sampler }, { binding: 1, resource: s.view }] });
   const motion = (own.motion = new Sdr2hdrMotion(gpu, pipes));
   const bytes = (w, h, size) => { const row = Math.ceil(w * size / 256) * 256; return { row, size: row * h }; };
@@ -462,7 +527,7 @@ async function sdr2hdrInterpSelfTestRun(gpu, pipes, mx, my, t, own) {
   const enc = device.createCommandEncoder();
   motion.advance(enc, A);
   const flowed = motion.advance(enc, B);
-  motion.mix(enc, A, B, t, M, 0);
+  motion.mix(enc, A, B, t, M, dbg);
   enc.copyTextureToBuffer({ texture: motion.flow[motion.flow.length - 1].tex }, { buffer: fbuf, bytesPerRow: fl.row }, [FW, FH]);
   enc.copyTextureToBuffer({ texture: M.tex }, { buffer: mbuf, bytesPerRow: md.row }, [W, H]);
   enc.copyTextureToBuffer({ texture: E.tex }, { buffer: ebuf, bytesPerRow: md.row }, [W, H]);
@@ -495,11 +560,13 @@ async function sdr2hdrInterpSelfTestRun(gpu, pipes, mx, my, t, own) {
   const flowGood = errs.filter((e) => e < 1).length / errs.length;
   // Picture: mean difference from the truth over the middle.
   const m32 = new Uint32Array(mbuf.getMappedRange().slice(0));
-  const diff = (other) => {
-    const o32 = new Uint32Array(other.getMappedRange().slice(0));
+  const read = new Map();     // each buffer can be mapped out once
+  const diff = (other, y0 = 40, y1 = H - 40, x0 = 40, x1 = W - 40) => {
+    if (!read.has(other)) read.set(other, new Uint32Array(other.getMappedRange().slice(0)));
+    const o32 = read.get(other);
     let ds = 0, dn = 0;
-    for (let y = 40; y < H - 40; y++) {
-      for (let x = 40; x < W - 40; x++) {
+    for (let y = y0; y < y1; y++) {
+      for (let x = x0; x < x1; x++) {
         const a = m32[y * (md.row / 4) + x], b = o32[y * (md.row / 4) + x];
         for (let c = 0; c < 3; c++) ds += Math.abs(((a >> (10 * c)) & 1023) - ((b >> (10 * c)) & 1023)) / 1023;
         dn += 3;
@@ -508,17 +575,32 @@ async function sdr2hdrInterpSelfTestRun(gpu, pipes, mx, my, t, own) {
     return ds / dn;
   };
   const midErr = diff(ebuf), errA = diff(abuf), errB = diff(bbuf);
+  const hy = Math.round(H * 0.45);
+  const bands = {
+    sky: diff(ebuf, 40, hy - 40),
+    horizon: diff(ebuf, hy - 40, hy + 30),
+    ground: diff(ebuf, hy + 30, H - 40),
+    // the columns at the sides, where what slides in has nothing to be matched with
+    left: diff(ebuf, 40, H - 40, 0, 24),
+    right: diff(ebuf, 40, H - 40, W - 24, W),
+  };
+  // With dbg 3 the picture is the fallback weight as grey: its mean is the share that fell back.
+  let fell = 0, fn = 0;
+  for (let y = 40; y < H - 40; y++) for (let x = 40; x < W - 40; x++) { fell += (m32[y * (md.row / 4) + x] & 1023) / 1023; fn++; }
+  const fellBack = fell / fn;
   const cutValue = sdr2hdrHalf(new Uint16Array(cbuf.getMappedRange().slice(0))[0]);
   const ms = performance.now() - began;
   const ok = flowed && flowMedian < 0.7 && midErr < 0.01;
-  return { ok, flowed, flowErr, flowMedian, flowGood, midErr, errA, errB, cutValue, ms, want: [wantX, wantY], why: ok ? '' : `the flow was off by ${flowMedian.toFixed(2)} px (typical) and the picture by ${(midErr * 100).toFixed(1)}%` };
+  return { ok, flowed, flowErr, flowMedian, flowGood, midErr, errA, errB, cutValue, bands, fellBack, ms, want: [wantX, wantY], why: ok ? '' : `the flow was off by ${flowMedian.toFixed(2)} px (typical) and the picture by ${(midErr * 100).toFixed(1)}%` };
 }
 
 // Runs the check and lets go of everything it made, whether it passed or not.
-async function sdr2hdrInterpSelfTest(gpu, pipes, mx = 12 / 512, my = 5 / 288, t = 0.5) {
+// pattern: 0 the smooth noise the check uses; 1 a scene (sky, horizon, ground)
+// to pan across. noise: how much new noise each frame has (0 for none).
+async function sdr2hdrInterpSelfTest(gpu, pipes, mx = 12 / 512, my = 5 / 288, t = 0.5, pattern = 0, noise = 0, dbg = 0) {
   const own = { keep: [], motion: null };
   try {
-    return await sdr2hdrInterpSelfTestRun(gpu, pipes, mx, my, t, own);
+    return await sdr2hdrInterpSelfTestRun(gpu, pipes, mx, my, t, own, pattern, noise, dbg);
   } finally {
     if (own.motion) own.motion.destroy();
     for (const x of own.keep) x.destroy();
