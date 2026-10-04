@@ -23,10 +23,10 @@ window.ready = setup().then((s) => { window.S = s; return true; });
 const b64 = (bytes) => { let s = ''; for (let i = 0; i < bytes.length; i += 0x8000) s += String.fromCharCode(...bytes.subarray(i, i + 0x8000)); return btoa(s); };
 const unb64 = (s) => Uint8Array.from(atob(s), (c) => c.charCodeAt(0));
 
-// Two saved pictures (base64 PNG) and the times t to make: returns the stats
+// Two saved pictures (base64 PNG) and the positions t (0 to 1) to make: returns the stats
 // and, for each t, the picture made, where it fell back (red) and the motion
 // found, as base64 PNGs.
-window.runPair = async (aPng, bPng, ts, maxW = 1920) => {
+window.runPair = async (aPng, bPng, times) => {
   const { gpu, pipes } = S;
   const { device } = gpu;
   const usage = GPUTextureUsage.RENDER_ATTACHMENT | GPUTextureUsage.TEXTURE_BINDING | GPUTextureUsage.COPY_SRC | GPUTextureUsage.COPY_DST;
@@ -47,7 +47,7 @@ window.runPair = async (aPng, bPng, ts, maxW = 1920) => {
     const W = A.tex.width, H = A.tex.height;
     if (B.tex.width !== W || B.tex.height !== H) throw new Error('the two pictures are not the same size');
     const [FW, FH] = SDR2HDR_FLOW_LEVELS[0];
-    const row = Math.ceil(W * 4 / 256) * 256;
+    const row = sdr2hdrRowBytes(W);
     motion = new Sdr2hdrMotion(gpu, pipes);
     // the motion work, as the page does it for each pair
     const enc = device.createCommandEncoder();
@@ -78,7 +78,7 @@ window.runPair = async (aPng, bPng, ts, maxW = 1920) => {
       fellShare: sdr2hdrHalf(new Uint16Array(wbuf.getMappedRange().slice(0, 8))[0]),
     };
     const images = [];
-    for (const t of ts) {
+    for (const t of times) {
       for (const [name, dbg] of [['mid', 0], ['fallback', 1], ['motion', 2]]) {
         // each picture is made and read on its own: the mix's settings are written ahead of the submit
         const e = device.createCommandEncoder();
@@ -89,7 +89,7 @@ window.runPair = async (aPng, bPng, ts, maxW = 1920) => {
         await b.mapAsync(GPUMapMode.READ);
         const rgba = sdr2hdrFrameToRgba(new Uint32Array(b.getMappedRange().slice(0)), W, H, row);
         b.unmap();
-        const png = await sdr2hdrPng(rgba, W, H, maxW);
+        const png = await sdr2hdrPng(rgba, W, H, 1920);
         images.push({ name: `${name}-t${Math.round(t * 100)}.png`, png: b64(png.bytes) });
       }
     }

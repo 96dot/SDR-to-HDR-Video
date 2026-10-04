@@ -1,6 +1,6 @@
 // Checks of the frame saver's file making (capture.js), with no GPU or
-// browser: the CRC, the zip (read back with the system's own unzip or Python's
-// zipfile), and the turning of the GPU's 10-bit frames into 8-bit pictures.
+// browser: the CRC, the zip (read back with Python's zipfile), and the
+// turning of the GPU's 10-bit frames into 8-bit pictures.
 // Run: node tests/capture.test.mjs
 import fs from 'fs';
 import os from 'os';

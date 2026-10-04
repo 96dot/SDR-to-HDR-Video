@@ -8,9 +8,7 @@
 // This file is the part with no GPU in it: turning the frames into pictures
 // (PNG) and the zip. The GPU's frames are read back in content.js.
 
-// A zip with nothing compressed: each file is stored as it is, which is all
-// that is needed for PNGs (already compressed) and a small text file, and
-// keeps this to a few lines.
+// The CRC-32 that a zip keeps for each file.
 const SDR2HDR_CRC_TABLE = (() => {
   const t = new Uint32Array(256);
   for (let n = 0; n < 256; n++) {
@@ -27,6 +25,9 @@ function sdr2hdrCrc32(bytes) {
   return (c ^ 0xFFFFFFFF) >>> 0;
 }
 
+// A zip with nothing compressed: each file is stored as it is, which is all
+// that is needed for PNGs (already compressed) and a small text file, and
+// keeps this to a few lines.
 // files: [{ name, data: Uint8Array }]. Returns a Blob.
 function sdr2hdrZip(files, when = new Date()) {
   const enc = new TextEncoder();
@@ -44,6 +45,7 @@ function sdr2hdrZip(files, when = new Date()) {
     // 20: version needed; flag 0x0800: the name is UTF-8; method 0: stored
     const local = cat(u32(0x04034b50), u16(20), u16(0x0800), u16(0), u16(time), u16(date), u32(crc), u32(f.data.length), u32(f.data.length), u16(name.length), u16(0), name);
     parts.push(local, f.data);
+    // central directory entry: signature, made by, needed, flags, method, time, date, crc, size, size, name length, extra, comment, disk, internal and external attributes, offset
     central.push(cat(u32(0x02014b50), u16(20), u16(20), u16(0x0800), u16(0), u16(time), u16(date), u32(crc), u32(f.data.length), u32(f.data.length), u16(name.length), u16(0), u16(0), u16(0), u16(0), u32(0), u32(offset), name));
     offset += local.length + f.data.length;
   }
@@ -70,6 +72,11 @@ function sdr2hdrFrameToRgba(words, w, h, rowBytes) {
   return out;
 }
 
+// The GPU wants the rows of a copy to a buffer to start on 256 bytes.
+function sdr2hdrRowBytes(w) {
+  return Math.ceil(w * 4 / 256) * 256;
+}
+
 // RGBA to a PNG (as bytes), made no wider than maxW.
 async function sdr2hdrPng(rgba, w, h, maxW) {
   const full = new OffscreenCanvas(w, h);
@@ -85,14 +92,15 @@ async function sdr2hdrPng(rgba, w, h, maxW) {
   return { bytes: new Uint8Array(await blob.arrayBuffer()), w: canvas.width, h: canvas.height };
 }
 
-// Hand a blob to the browser as a download, from a key press.
+// Hand a blob to the browser as a download. The link is never put on the
+// page: a page could see it, and read what is behind it (the address of a
+// blob made here belongs to the page's own origin). The address is let go
+// soon after, once the browser has had time to start the download.
 function sdr2hdrDownload(blob, name) {
   const url = URL.createObjectURL(blob);
   const a = document.createElement('a');
   a.href = url;
   a.download = name;
-  a.style.display = 'none';
-  (document.body || document.documentElement).append(a);
   a.click();
-  setTimeout(() => { a.remove(); URL.revokeObjectURL(url); }, 20000);
+  setTimeout(() => URL.revokeObjectURL(url), 5000);
 }

@@ -5,6 +5,8 @@
 // found, and the numbers (see SDR2HDR_CUT and SDR2HDR_STATS in interp.js).
 // Run: node tests/pairs.mjs <frames.zip | folder> [out folder] [t,t,...]
 //   e.g. node tests/pairs.mjs headroom-frames-youtube.com-20261004.zip out 0.25,0.5,0.75
+// The browser is started without its sandbox (as in interp.test.mjs), so use
+// frames you saved yourself, not a zip from someone else.
 // Needs Playwright and a Chromium (PLAYWRIGHT_MODULE / CHROME if not in the usual place).
 // The frames are as saved (never wider than 1920), so a 4K source is judged
 // here at a smaller size than the converter sees; the numbers are measured on
@@ -20,12 +22,13 @@ const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const [input, outArg, tArg] = process.argv.slice(2);
 if (!input) { console.error('usage: node tests/pairs.mjs <frames.zip | folder> [out folder] [t,t,...]'); process.exit(2); }
 const out = path.resolve(outArg || 'pairs-out');
-const ts = (tArg || '0.5').split(',').map(Number);
-if (!ts.length || ts.some((t) => !(t > 0 && t < 1))) { console.error('t must be numbers between 0 and 1'); process.exit(2); }
+const times = (tArg || '0.5').split(',').map(Number);
+if (!times.length || times.some((t) => !(t > 0 && t < 1))) { console.error('t must be numbers between 0 and 1'); process.exit(2); }
 
 let dir = path.resolve(input);
+let tmp = '';
 if (dir.endsWith('.zip')) {
-  const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'pairs-'));
+  tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'pairs-'));
   execFileSync('python3', ['-m', 'zipfile', '-e', dir, tmp]);
   dir = tmp;
 }
@@ -53,15 +56,22 @@ const all = [];
 for (let i = 0; i + 1 < frames.length; i++) {
   const a = fs.readFileSync(path.join(dir, frames[i])).toString('base64');
   const b = fs.readFileSync(path.join(dir, frames[i + 1])).toString('base64');
-  const r = await page.evaluate(([x, y, t]) => window.runPair(x, y, t), [a, b, ts]);
   const name = `pair${i + 1}-${i + 2}`;
+  let r;
+  try {
+    r = await page.evaluate(([x, y, t]) => window.runPair(x, y, t), [a, b, times]);
+  } catch (e) {
+    console.log(`${name}  skipped: ${e.message.split('\n')[0]}`);
+    continue;
+  }
   fs.mkdirSync(path.join(out, name), { recursive: true });
   for (const im of r.images) fs.writeFileSync(path.join(out, name, im.name), Buffer.from(im.png, 'base64'));
   all.push({ pair: name, ...r.stats });
   const s = r.stats;
-  console.log(`${name}  ${s.size.join('x')}  mismatch ${s.cutCoarse.toFixed(3)} coarse / ${s.cutFine.toFixed(3)} fine, fastest ${s.fastestPx.toFixed(1)} px, overall motion (${s.globalFlow.map((v) => v.toFixed(1)).join(', ')}) px, fell back ${(s.fellShare * 100).toFixed(1)}%${s.flowed ? '' : '  (no flow made)'}`);
+  console.log(`${name}  ${s.size.join('x')}  mismatch ${s.cutCoarse.toFixed(3)} coarse / ${s.cutFine.toFixed(3)} fine, fastest ${s.fastestPx.toFixed(1)}, overall motion (${s.globalFlow.map((v) => v.toFixed(1)).join(', ')}), both in pixels of a 480-wide grid, fell back ${(s.fellShare * 100).toFixed(1)}%${s.flowed ? '' : '  (no flow made)'}`);
 }
-fs.writeFileSync(path.join(out, 'stats.json'), JSON.stringify({ source: info, t: ts, pairs: all }, null, 2));
+fs.writeFileSync(path.join(out, 'stats.json'), JSON.stringify({ source: info, t: times, pairs: all }, null, 2));
 console.log(`written to ${out}`);
 await browser.close();
 server.close();
+if (tmp) fs.rmSync(tmp, { recursive: true, force: true });

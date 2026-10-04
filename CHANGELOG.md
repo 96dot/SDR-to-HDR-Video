@@ -2,6 +2,32 @@
 
 All notable changes to Headroom HDR (called SDR to HDR Video before 0.11). Versions follow the number in `manifest.json`.
 
+## 1.3.6 - 2026-10-04
+
+### Added
+
+- **A frame saver, so Smooth motion can be tuned on your real footage.** With Stats on, **Alt+Shift+C** (a real key press only, like the other Stats keys) saves four frames in a row of the video that is playing, exactly as the converter holds them (never wider than 1920), with an info file (version, site name, sizes, frame times, frame rate, refresh interval, the main settings) and the report, into one zip in Downloads. It is made in the page: nothing is sent anywhere and no new permission is used. The frames are read back from the GPU as they are copied, so they are real neighbours. It needs Every refresh on (it says so in the report's history otherwise), waits while the converter is easing off (every other frame is let go then), stops if the picture changes size mid-way, and gives up after 8 seconds if the video stalls.
+- **`tests/pairs.mjs`**: runs the real motion code (`interp.js`) on those frames in headless Chromium and writes, for each neighbouring pair, the made-up picture at the positions you ask for, where it fell back (red), the motion found, and the numbers (mismatch, fastest motion, overall motion, share that fell back). Thresholds can then be judged on your footage and not on made-up pictures.
+- Tests: `capture.test.mjs` (CRC, zip read back by Python, 10-bit to 8-bit) and `pairs.test.mjs` (a made-up pair with a known 12 and 5 px shift: found within half a pixel, the picture made at the halfway point is within 2.5 of 255 of the truth where the plain frame is 18.7 off).
+- PRIVACY.md and README say that the saver writes a file to Downloads.
+
+### Found and fixed in review
+
+- The download link was first put on the page for a moment, where a page could have seen it and read the zip. It is now never on the page, and its address is let go after 5 seconds.
+- With Every refresh off the saver would have started and then quietly timed out; it now says why it did not start. A size change mid-save, and frames too large to read back (over 256 MB each), are refused. The pair tool skips a mismatched pair instead of stopping.
+
+### Found and not changed
+
+- The report in the zip has your graphics card, browser and machine details, as it always has when you copy it. Frames show what was playing. Look before sharing.
+- The saved pictures are the converter's copy of the frame (SDR, before any picture change), cut from 10 to 8 bits by dropping the low bits, and made smaller if wider than 1920; at 4K the pair tool therefore sees a smaller picture than the converter. Its numbers are measured on a coarse grid and should hardly change.
+- If more than one video is playing, the first one that is being converted is saved.
+- The browser may ask about, or block, a second automatic download from the same site; not seen in testing here.
+
+### Tested, and not
+
+- Checked here: a real key press in headless Chromium saves a zip of four correct PNGs (right colours, frame times in order), the info file and the report; a made-up key press and Stats off do nothing; Every refresh off is refused with a reason; the page sees no link added; the zip opens in Python with every checksum right; the pair tool recovers a known shift and makes the right picture; the older shader and timing tests and the popup (unchanged) still pass.
+- Not checked: on your card and a real 4K video (the frames will be large: about 130 MB of GPU memory is held for a moment while saving at 4K); whether Brave asks about the download; how long the save takes at 4K (it should be a second or two).
+
 ## 1.3.5 - 2026-10-04
 
 ### Fixed

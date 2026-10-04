@@ -15,7 +15,9 @@ const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 let failed = 0;
 const check = (name, ok, detail) => { console.log(`${ok ? 'PASS' : 'FAIL'}  ${name}${detail ? '  ' + detail : ''}`); if (!ok) failed++; };
 
-// PNG writing and reading (8-bit RGBA, not interlaced), enough for this.
+// PNG writing and reading (8-bit RGBA, not interlaced), enough for this. The
+// CRC is written out again here, not taken from capture.js, so that the test
+// does not lean on the code it is checking.
 const crcT = Array.from({ length: 256 }, (_, n) => { let c = n; for (let k = 0; k < 8; k++) c = c & 1 ? 0xEDB88320 ^ (c >>> 1) : c >>> 1; return c >>> 0; });
 const crc = (b) => { let c = 0xFFFFFFFF; for (const x of b) c = crcT[(c ^ x) & 255] ^ (c >>> 8); return (c ^ 0xFFFFFFFF) >>> 0; };
 const chunk = (type, data) => { const t = Buffer.from(type); const h = Buffer.alloc(4); h.writeUInt32BE(data.length); const c = Buffer.alloc(4); c.writeUInt32BE(crc(Buffer.concat([t, data]))); return Buffer.concat([h, t, data, c]); };
