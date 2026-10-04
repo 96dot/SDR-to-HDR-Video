@@ -2,6 +2,33 @@
 
 All notable changes to Headroom HDR (called SDR to HDR Video before 0.11). Versions follow the number in `manifest.json`.
 
+## 1.2.6 - 2026-10-04
+
+Fixes from a review of the whole extension for logic, security and readability problems, each checked against the code before it was changed.
+
+### Fixed
+
+- **Fullscreen on a bare video rebuilt the overlay about twice a second.** When a site fullscreens the `<video>` itself, the overlay is moved into a box above it (the top layer). The once-a-second check for "the page moved the video" then found the overlay was not beside the video, took that for a move, and destroyed the session; the next scan made a new one, and so on. Each rebuild discarded the stats and the half-rate and beat state. It now checks that the box is still on the page. This is the 1.2.2 "moved video" check going wrong, so 1.2.2 to 1.2.5 are affected. Measured in headless Chromium with a made-up video: about 7 new elements a second added to the page before, none after the first move.
+- **Half rate stuck when "Every refresh" was switched off during an episode.** Nothing steers without Every refresh, so the episode stayed on record: the badge said "every other frame", Auto quality could not step down, and when Every refresh came back the stale episode could be judged as having failed and counted against trying again. Switching it off now ends the episode (every frame is taken then anyway), without counting it as a failed try; the report lists it as "stopped (Every refresh was switched off)".
+- **A failed unlock rule stopped the clean-up after it.** If making a rule failed, the queue was left failed, and the next "switch unlock off" or "tab closed" clean-up was skipped, so rules stayed until the browser was closed. Checked with a made-up failure: the queue was rejected before, fine after.
+- **A colour picked and a theme clicked within a quarter of a second** could end up with the first theme saved over the second. The pending save is cancelled by the click.
+
+### Changed
+
+- README: the Alt+Shift+M row says it goes round shader, guided and model; "three switches" for the site card; the permission is named `declarativeNetRequestWithHostAccess`; the Files table covers `theme.js`, what `ui.css` and `background.js` do, and what `icons/` holds; the model has a preparation step and eleven passes. Comments in `background.js`, `pacer.html` and `ui.css` that no longer matched the code are corrected, and the 1.2.5 entry's popup heights agree with each other.
+
+### Found and not changed (low)
+
+- Unlock rules cover any media the unlocked site asks for, not only the one video's host (it could be narrowed to the video's host).
+- The split-line drag accepts made-up pointer events from a page (cosmetic: the split position).
+- A GPU device is left behind when starting fails part-way; a model removed while it was loading stays on the GPU until the device is lost; small pacing-worker clean-up gaps; `selfTestReport` is saved and never read; a model file with a layer missing its shape shows a raw error.
+- `docs/themes.png` still shows Rose.
+
+### Tested, and not
+
+- Checked here, in headless Chromium with the extension loaded and an HDR display faked: the fullscreen rebuild reproduced with the 1.2.5 code and gone with this one; the failed-rule queue and the colour-versus-theme race reproduced with 1.2.5 and fixed.
+- Not checked: the half-rate fix (an episode can't be provoked without a real decoder under load; it was made by reading the code), and none of it on real video, Windows or a real display. For fullscreen, try a video file opened straight in the browser: it should now stay steady.
+
 ## 1.2.5 - 2026-10-04
 
 ### Changed
@@ -9,13 +36,13 @@ All notable changes to Headroom HDR (called SDR to HDR Video before 0.11). Versi
 - **The Rose theme is replaced by Match**, placed second to last, just before Custom. Pick one colour and the second is worked out from it (turned 75 degrees round the colour wheel, about as far as Aurora turns its two, at the same lightness, for a bolder pair), so the pair always goes together. The glow, the light behind the glass, the popup's logo and the toolbar icon are all made from the pair, the same way as for Custom. Its colour is kept separately from Custom's two, so changing one doesn't touch the other. Match starts on pink.
 - Anyone who had Rose chosen is moved to Amber.
 - The two keyboard shortcut lines at the bottom of the settings no longer touch: there is a few pixels of air between their key boxes. The settings view is 567 px (594 px with the Match or Custom row showing) of the 600 a browser allows, so about 6 px is left.
-- **A glass colour picker for Match and Custom**, in place of the browser's own colour dialog (which can't be styled, and can close the popup while it is open). Click a colour box and a glass panel opens under the Colours card with a square for how vivid and how bright, a strip for the colour, and a box for a hex code. It floats over the cards below, so the popup does not grow (586 px with it open, as before). Works with the keyboard (arrow keys, Shift for bigger steps); Esc, a click outside, or choosing another theme closes it.
-- Only the extension's own colours change. The picture, and the popup's height (586 px with the Match or Custom row showing, as before), are as they were.
+- **A glass colour picker for Match and Custom**, in place of the browser's own colour dialog (which can't be styled, and can close the popup while it is open). Click a colour box and a glass panel opens under the Colours card with a square for how vivid and how bright, a strip for the colour, and a box for a hex code. It floats over the cards below, so the popup does not grow (594 px at most with it open, the same as with the colour row alone). Works with the keyboard (arrow keys, Shift for bigger steps); Esc, a click outside, or choosing another theme closes it.
+- Only the extension's own colours change. The picture is as it was.
 - README updated for the new theme. Its theme screenshot (`docs/themes.png`) still shows Rose.
 
 ### Tested, and not
 
-- Checked here, in headless Chromium with the extension loaded: the swatches are Amber, Ocean, Aurora, Match, Custom in that order; choosing Match shows its one-colour row, and a picked colour (dragged, typed as a hex code, or from the keyboard) is applied, saved, and gives the toolbar icon (the service worker) the same pair as the popup; a saved Rose falls back to Amber; no errors; the settings view is 559 px with other themes and 586 px with Match or Custom.
+- Checked here, in headless Chromium with the extension loaded: the swatches are Amber, Ocean, Aurora, Match, Custom in that order; choosing Match shows its one-colour row, and a picked colour (dragged, typed as a hex code, or from the keyboard) is applied, saved, and gives the toolbar icon (the service worker) the same pair as the popup; a saved Rose falls back to Amber; no errors; the settings view was 559 px with other themes and 586 px with Match or Custom, before the shortcut lines were spaced out (see above for the final figures).
 - Not checked: how the picker feels under a real mouse and how the glass looks in Brave (headless Chromium does not blur what is behind it, so the panel is made dense enough not to need it); the picker in the Aurora theme; how the Match colours look to you across the range of colours you might pick (very dark or very pale ones especially), and the toolbar icon in a real toolbar. The 75 degree turn is my choice, taken from how far Aurora's two colours sit apart; it's one number, easy to change.
 
 ## 1.2.4 - 2026-10-04

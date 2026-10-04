@@ -883,7 +883,29 @@
     // Start the every-refresh loop if it should be running. It stops by
     // itself when the video pauses or the setting is switched off.
     syncLoop() {
-      if (!this.dead && settings.poll && !this.raf && !this.video.paused) this.raf = requestAnimationFrame(this.onTick);
+      if (this.dead) return;
+      if (!settings.poll) this.endEpisode();
+      else if (!this.raf && !this.video.paused) this.raf = requestAnimationFrame(this.onTick);
+    }
+
+    // Without Every refresh nothing steers, and every frame is taken whatever
+    // the episode says. So an episode of half rate (or a held beat) that was
+    // going when it was switched off is ended here, or it would stay on
+    // record for ever, keep Auto quality from stepping, and be judged as
+    // having failed when Every refresh came back. It is not counted as a try.
+    endEpisode() {
+      const e = this.ease, k = this.beat;
+      if (e.half) {
+        const t = performance.now();
+        e.half = false;
+        e.fullAt = t;
+        if (e.now) { e.now.ms = t - e.at; e.now.ended = true; }
+        this.restUntil = 0;
+        note(`${nameOf(this.video)}: Every refresh is off; taking every frame`);
+        this.updateBadge();
+      }
+      k.now = null;
+      k.due = false;
     }
 
     // The timestamp of the frame the video is showing right now, or null if
@@ -2206,10 +2228,10 @@
       lines.push(`Easing off for the decoder: ${this.eases.length} time${this.eases.length === 1 ? '' : 's'}. Decode time now: ${n(this.procNow)} ms a frame (usual for this video: ${n(this.procBase || NaN)}).`,
         '    time   at half rate  decode time before  at the end  rested  outcome');
       for (const r of this.eases.slice(-25)) {
-        const live = r.worked == null;
+        const live = r.worked == null && !r.ended;
         lines.push(`${(((r.at - this.born) / 1000).toFixed(1) + 's').padStart(8)}${(((live ? Math.max(0, (this.steerAt || t) - r.at) : r.ms) / 1000).toFixed(1) + ' s').padStart(15)}` +
           `${((r.dropping ? 'drops, ' : '') + n(r.procBefore) + ' ms').padStart(20)}${(n(live ? this.procNow : r.procAfter) + ' ms').padStart(12)}` +
-          `${(r.rested ? 'yes' : 'no').padStart(8)}  ${live ? 'still going' : (r.worked ? 'the decoder caught up' : 'did not help')}`);
+          `${(r.rested ? 'yes' : 'no').padStart(8)}  ${live ? 'still going' : (r.ended ? 'stopped (Every refresh was switched off)' : (r.worked ? 'the decoder caught up' : 'did not help'))}`);
       }
       lines.push(...this.beatLines(), ...this.paceLines());
       return lines;
@@ -2736,7 +2758,9 @@
       // The page has moved the video somewhere else and left the overlay
       // behind, where it would go on drawing while the video sat invisible in
       // its new place. Start again beside it.
-      if (s.canvas.parentNode !== v.parentNode) { s.destroy('the page moved the video'); continue; }
+      // (In a bare video's fullscreen the overlay is in the top-layer box on
+      // purpose, so it is that box that has to still be on the page.)
+      if (s.top ? !(s.pop && s.pop.isConnected) : s.canvas.parentNode !== v.parentNode) { s.destroy('the page moved the video'); continue; }
       s.layout();
       s.perfTick();
       // A video that has been drawing fine for a while gets a clean slate: an

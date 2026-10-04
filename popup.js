@@ -216,6 +216,8 @@ for (const ev of ['pagehide', 'blur']) addEventListener(ev, () => { clearTimeout
 for (const b of document.querySelectorAll('.swatch')) {
   b.addEventListener('click', () => {
     picker.close();
+    clearTimeout(colourSave);
+    colourPending = null;
     applyTheme(b.dataset.theme);
     try { localStorage.setItem('theme', b.dataset.theme); } catch (e) {}
     chrome.storage.local.set(b.dataset.theme === 'custom' ? { theme: 'custom', themeColours: customColours } : b.dataset.theme === 'match' ? { theme: 'match', themeMatch: matchColour } : { theme: b.dataset.theme });

@@ -89,7 +89,7 @@ The model runs once per video frame on a small copy of the picture, as GPU compu
 
 ### Per-site settings
 
-When the popup is opened on a web page it shows that site's hostname with two switches:
+When the popup is opened on a web page it shows that site's hostname with three switches:
 
 - **Turn off here** disables the extension on that site only.
 - **Unlock locked videos** is for sites where the popup reports a locked video; see the next section.
@@ -137,7 +137,7 @@ It does not work on DRM-protected video; nothing does.
 |---|---|
 | Alt+Shift+H | Turn HDR conversion on or off |
 | Alt+Shift+S | Turn split view on or off |
-| Alt+Shift+M | Switch between the shader and your trained model |
+| Alt+Shift+M | Go round the methods: shader, guided, model (needs a loaded model) |
 
 Chrome may not assign these automatically when an unpacked extension is reloaded. Set or change them at `chrome://extensions/shortcuts`.
 
@@ -204,7 +204,7 @@ The extension also keeps its background work light while a video plays: looking 
 
 `expansionGain()` in `shader.js` is the one function that decides how much brighter each pixel gets. With a model loaded and selected, that decision comes from the model instead, and the rest of the main pass is unchanged.
 
-The model is a small convolutional network (about 52,000 weights). Each video frame is shrunk to 480x270 and run through it in eleven compute-shader passes (`model.js`). The network's picture is always 16:9; a video of another shape sits in it with black bars, unstretched, which is how the trainer showed it such films. It does not output a picture. It outputs a 120x68 map of brightness curves: at each spot, four numbers giving the gain for pixels of four brightness levels. The main pass reads each pixel's gain from the curve at its position, so the per-pixel cost is one extra texture read.
+The model is a small convolutional network (about 52,000 weights). Each video frame is shrunk to 480x270 and run through it in a preparation step and eleven compute-shader passes (`model.js`). The network's picture is always 16:9; a video of another shape sits in it with black bars, unstretched, which is how the trainer showed it such films. It does not output a picture. It outputs a 120x68 map of brightness curves: at each spot, four numbers giving the gain for pixels of four brightness levels. The main pass reads each pixel's gain from the curve at its position, so the per-pixel cost is one extra texture read.
 
 The curves are eased over about a tenth of a second so the picture doesn't flicker from frame to frame; where they change a lot at once, as at a scene cut, the new value is used straight away.
 
@@ -241,7 +241,7 @@ Messages from the extension appear in the page's DevTools console, prefixed `[He
 ## Permissions
 
 - **Access to all sites**: the content script has to run on any page that might contain a video.
-- **declarativeNetRequest**: used only by **Unlock locked videos**, and only on sites where you switch that on, to add the response headers that let a video be read.
+- **declarativeNetRequestWithHostAccess**: used only by **Unlock locked videos**, and only on sites where you switch that on, to add the response headers that let a video be read.
 - **storage**: saves your settings, and a trained model if you load one, locally. Nothing is synced or sent anywhere.
 - **One page any site may load** (`pacer.html`, a web-accessible resource): the frame that pacing runs in has to be loadable inside the page being watched. It holds nothing and does nothing but pace that page's own drawing; a site could tell from it that the extension is installed.
 
@@ -261,11 +261,12 @@ The extension makes no network requests.
 | `pacer.html`, `pacer-frame.js` | The extension's own frame, one dot big and see-through, put into a page that is converting fast video. Its workers can't be started from the page itself on sites like YouTube. |
 | `pacer-worker.js` | The four workers in that frame: one paces, one asks the GPU thread, one keeps time for those two, one keeps the browser's timers fine. |
 | `model.html`, `model-page.js` | The page for loading or removing a trained model. |
-| `background.js` | Handles the keyboard shortcuts, and the header rules for unlocking videos. |
+| `background.js` | Handles the keyboard shortcuts, the header rules for unlocking videos, the colouring of the toolbar icon, and hands the FSRCNNX files to the page that asks for them. |
+| `theme.js` | The colour themes (Amber, Ocean, Aurora, Match, Custom): puts the chosen one on every extension page and colours the popup's logo. Its colour maths is repeated in `background.js` for the toolbar icon; keep the two in step. |
 | `popup.html`, `popup.js` | The settings popup. |
 | `calibrate.html`, `calibrate.js` | The display calibration page. |
-| `ui.css` | Shared styling for the popup and calibration page. |
-| `icons/` | Generated raster icon artwork, browser sizes and colour variants for the four themes. |
+| `ui.css` | Shared styling for the popup, the calibration page and the model page. |
+| `icons/` | The packaged icon in four sizes, and its SVG artwork. The toolbar icon and the popup's logo are recoloured from it for the chosen theme as they are drawn. |
 | `CHANGELOG.md` | What changed in each version. |
 | `PRIVACY.md` | The privacy policy: nothing is collected or sent. |
 | `upnet.js` | Reads the FSRCNNX shader files and turns their passes into WGSL, for the Best level of Upscaling. |
