@@ -111,20 +111,31 @@ const markTheme = () => {
   const now = document.documentElement.dataset.theme || 'amber';
   for (const b of document.querySelectorAll('.swatch')) b.setAttribute('aria-pressed', String(b.dataset.theme === now));
   $('customRow').hidden = now !== 'custom';
+  $('matchRow').hidden = now !== 'match';
+  $('matchA').value = matchColour;
+  $('matchSwatch').style.background = `linear-gradient(135deg, ${matchPair(matchColour).map(hexOf).join(', ')})`;
   $('customA').value = customColours[0];
   $('customB').value = customColours[1];
   $('customSwatch').style.background = `linear-gradient(135deg, ${customColours[0]}, ${customColours[1]})`;
 };
-// The Custom theme's two colours: shown as they are picked, saved a moment after.
+// The Custom theme's two colours, and the Match theme's one: shown as they are
+// picked, saved a moment after.
 let colourSave = 0, colourPending = null;
-const saveColours = () => { if (colourPending) { chrome.storage.local.set({ theme: 'custom', themeColours: colourPending }); colourPending = null; } };
+const saveColours = () => { if (colourPending) { chrome.storage.local.set(colourPending); colourPending = null; } };
+$('matchA').addEventListener('input', () => {
+  applyTheme('match', null, $('matchA').value);
+  $('matchSwatch').style.background = `linear-gradient(135deg, ${matchPair(matchColour).map(hexOf).join(', ')})`;
+  clearTimeout(colourSave);
+  colourPending = { theme: 'match', themeMatch: matchColour };
+  colourSave = setTimeout(saveColours, 250);
+});
 for (const id of ['customA', 'customB']) {
   $(id).addEventListener('input', () => {
     const c = [$('customA').value, $('customB').value];
     applyTheme('custom', c);
     $('customSwatch').style.background = `linear-gradient(135deg, ${c[0]}, ${c[1]})`;
     clearTimeout(colourSave);
-    colourPending = c;
+    colourPending = { theme: 'custom', themeColours: c };
     colourSave = setTimeout(saveColours, 250);
   });
 }
@@ -134,7 +145,7 @@ for (const b of document.querySelectorAll('.swatch')) {
   b.addEventListener('click', () => {
     applyTheme(b.dataset.theme);
     try { localStorage.setItem('theme', b.dataset.theme); } catch (e) {}
-    chrome.storage.local.set(b.dataset.theme === 'custom' ? { theme: 'custom', themeColours: customColours } : { theme: b.dataset.theme });
+    chrome.storage.local.set(b.dataset.theme === 'custom' ? { theme: 'custom', themeColours: customColours } : b.dataset.theme === 'match' ? { theme: 'match', themeMatch: matchColour } : { theme: b.dataset.theme });
     markTheme();
   });
 }

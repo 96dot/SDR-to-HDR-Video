@@ -207,10 +207,14 @@
           <div class="swatches" id="swatches">
             <button class="swatch" data-theme="amber" title="Amber" aria-label="Amber" style="background:linear-gradient(135deg,#ffc566,#ff9d3c)"></button>
             <button class="swatch" data-theme="ocean" title="Ocean" aria-label="Ocean" style="background:linear-gradient(135deg,#5ff0dc,#3aa0ff)"></button>
-            <button class="swatch" data-theme="rose" title="Rose" aria-label="Rose" style="background:linear-gradient(135deg,#ff8fc0,#c06bff)"></button>
             <button class="swatch" data-theme="aurora" title="Aurora (the old pastel look; light or dark with your system)" aria-label="Aurora" style="background:linear-gradient(135deg,#cdb8f7,#ffc6de 60%,#bcdcff)"></button>
+            <button class="swatch" data-theme="match" id="matchSwatch" title="Match: pick one colour and the second is worked out to go with it" aria-label="Match"></button>
             <button class="swatch" data-theme="custom" id="customSwatch" title="Custom: two colours of your own" aria-label="Custom"></button>
           </div>
+        </div>
+        <div class="row plain" id="matchRow" hidden title="One colour of your own; the second is worked out from it, and the glow, the light behind the glass and the icon are made from the pair.">
+          <span>Your colour</span>
+          <span class="end"><input type="color" id="matchA" aria-label="Colour"></span>
         </div>
         <div class="row plain" id="customRow" hidden title="Your own theme: the glow, the light behind the glass and the icon are all made from these two colours.">
           <span>Your two colours</span>

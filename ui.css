@@ -50,14 +50,6 @@
   --accent-a: #5ff0dc; --accent-b: #3aa0ff; --glow: rgba(70, 200, 255, .55); --on-accent: #04202a;
 }
 
-:root[data-theme="rose"] {
-  --blob1: #ff6fa8; --blob2: #b05cff; --blob3: #ff9a6a; --blob4: #ffc1dc;
-  --page: radial-gradient(120% 90% at 85% 0%, #40152c 0%, #1e1430 45%, #0f0a1a 100%);
-  --edge: rgba(255, 215, 235, .22); --shine: rgba(255, 225, 240, .18);
-  --ink: #fff2f8; --ink-soft: #d6bccb; --focus: #ffb3d4;
-  --accent-a: #ff8fc0; --accent-b: #c06bff; --glow: rgba(255, 110, 180, .55); --on-accent: #2a0518;
-}
-
 /* Aurora: the pastel look the extension had before 0.11, light or dark with the system. */
 :root[data-theme="aurora"] {
   color-scheme: light dark;
