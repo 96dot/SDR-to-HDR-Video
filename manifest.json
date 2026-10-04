@@ -1,7 +1,7 @@
 {
   "manifest_version": 3,
   "name": "Headroom HDR",
-  "version": "1.2.5",
+  "version": "1.3.10",
   "description": "Real-time SDR to HDR video on your GPU, using the brightness your display has to spare.",
   "minimum_chrome_version": "129",
   "icons": {
@@ -67,11 +67,13 @@
       ],
       "js": [
         "shader.js",
+        "interp.js",
         "upnet.js",
         "model.js",
         "diag.js",
         "pacer.js",
         "cue.js",
+        "capture.js",
         "content.js"
       ],
       "all_frames": true,

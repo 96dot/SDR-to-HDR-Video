@@ -1,0 +1,6 @@
+{
+  "mustExist": ["LICENSE", "README.md", "CHANGELOG.md", "PRIVACY.md", "LICENSE-FSR.txt"],
+  "commands": [
+    { "name": "Headroom checks (tests/check-all.mjs)", "run": "node tests/check-all.mjs", "slow": true, "timeoutMin": 15 }
+  ]
+}

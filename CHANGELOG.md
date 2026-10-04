@@ -2,6 +2,295 @@
 
 All notable changes to Headroom HDR (called SDR to HDR Video before 0.11). Versions follow the number in `manifest.json`.
 
+## 1.3.10 - 2026-10-04
+
+Nothing in the extension changed; this is the checking kit again.
+
+### Added
+
+- **`tests/general/check-project.mjs`**: a general version of the checks, one file, no dependencies (Node 18 or later), for any project. It works out what the project is and runs what applies: git (uncommitted or unpushed work), syntax (JavaScript, JSON, Python, shell, TypeScript), lint (eslint, ruff or flake8), a `package.json`'s lint, typecheck and test scripts, pytest or unittest, `go vet` and `go test`, `cargo check` and `cargo test`, a browser extension's manifest (every file it names, the version against the changelog), links between Markdown files, secrets left in files (private keys, cloud and API tokens, passwords in URLs) and files over 5 MB. Anything it cannot run says SKIP and why. `--quick`, `--build`, `--json`, `--only` and `--skip` choose what runs; the exit code is 1 if anything failed.
+- **`.checks.json`**: a project's own checks in the same run: files that must exist, shell commands, and pairs of places that must be kept the same by hand (a regex for each; the first capture group is compared). This repository's wires in `tests/check-all.mjs`.
+- **`tests/general/GENERAL-CHECKS.md`**: the procedure for any project and any chat, with a paragraph to paste at the start of a chat, generic prompts for the three reviews, and how to verify, run it for real and report.
+
+### Found and not changed
+
+- It is a first pass, not a full linter: the secret patterns catch well-known shapes (not a random password in a config), the Markdown link check ignores links to web pages, and a project with unusual tooling needs `.checks.json`.
+
+### Tested, and not
+
+- Checked here: on this repository; on a small Python project (it caught an unused import with ruff, ran pytest); on a Node project broken on purpose (a bad JSON file, a failing test, a key left in a file, a broken link, two files that should match and did not, a custom command that exits 3: each reported, exit code 1); on an empty folder (everything SKIP, nothing passes by not running); the `--only`, `--skip`, `--quick` and `--json` options.
+- Not checked: Go and Rust projects (no toolchain here; they SKIP), TypeScript (no local `tsc` in the test projects), yarn or pnpm, Windows.
+
+## 1.3.9 - 2026-10-04
+
+Nothing in the extension changed; this is the checking kit.
+
+### Added
+
+- **`tests/check-all.mjs`**: one command (`node tests/check-all.mjs --e2e`, about a minute) for the automated half of the checks a major update needs: syntax of every script, lint, every file the manifest names, the changelog heading against the manifest version, `popup.js` and `content.js` DEFAULTS against each other, the theme palettes and the Match colour maths against each other (200 random colours), every test in `tests/`, the popup's height in the main view and the settings view with the Amber, Match and Custom themes (466, 567 and 594 px today, against a limit of 600), and, with `--e2e`, the extension run in headless Chromium: a real Alt+Shift+C saves four frames with the info and the report, a key press made by the page does not, and neither does it with Stats off.
+- **`tests/CHECKS.md`**: the whole procedure for future sessions: the script, the three read-only reviews with paste-ready prompts, verifying every finding, running it, scoring changes on real footage (`pairs.mjs`, `tune.mjs`, and why to look at the pictures), and what the report to Jones should hold. `CLAUDE.md` and `tests/README.md` point to it.
+
+### Found and not changed
+
+- The popup is measured with no HDR display, which is the tallest case (its status line takes two lines); with the HDR display faked it is 14 px shorter.
+- The e2e needs ffmpeg for a test video, and retries the key press because the tab can lose the keyboard focus.
+
+### Tested, and not
+
+- Checked here: the script passes (20 checks, 0 failed) on this repository; its numbers match the ones in `CLAUDE.md`; each check was seen to fail when something was broken on purpose (a changed default, a changed palette colour, a changed Match constant, a missing manifest file, a syntax error, a version without a changelog heading, a popup made 200 px taller, a misspelt function in the shader), and the file was put back each time.
+- Not checked: on Windows or macOS (the script was only run here), and with the lint warnings of a newer eslint.
+
+## 1.3.8 - 2026-10-04
+
+### Fixed
+
+- **Warped swirls in the made-up pictures of a crowd and a dark sky.** (Seen by you, found with the 1.3.7 recorder and five saves of real frames from that moment.) The picture is made from the motion found at each place, and the rule that decides where that motion cannot be trusted went by how well the match fitted there. On dark sky with tiny stars, and on a crowd waving, almost any shift fits about as well, so the match said nothing and the picture came out as smeared, warped swirls (on one pair, a psychedelic patch in the sky), no better than showing the plain frame and sometimes twice as far from the truth in those places. Measured on your frames, the cost of the match had no power at all to tell the bad places from the good (0.55 on a scale where 0.5 is no better than chance).
+  - What does tell them apart: the motion found here differs from the overall motion, and the two pictures it would make disagree here (0.81). Such a place now uses the overall motion (the pan), which is the better guess where nothing can be seen to follow. A thing really moving its own way also differs from the overall motion, but its two pictures agree, so it keeps its own motion.
+  - Scored on 16 real pairs from five moments (rebuild the picture between frames 1 and 3, compare with the real frame 2, out of 255): the made-up picture's error went from 11.42 to 10.72 on average (the plain frame: 17.57). The calm moments are exactly as before (4 4 4 5 3 4 3 2); the hard ones improved (one pair 12 to 8, 20 to 17). The swirl is gone from the picture; the stars and the far crowd come out slightly soft rather than wrong.
+  - The Alt+Shift+I red view now also tints these places blue (red is still the nearer real frame).
+
+### Added
+
+- **`tests/tune.mjs` and `tests/tune.html`**: replay the mixing shader with variations on real saved frames and score each against the true frame, many in one run. This is how the fix was found (eight candidate signals ranked, then the rule tuned).
+
+### Found and not changed
+
+- The fix is a hand-picked rule on 16 pairs from one video (WWE entrance footage, the same arena); other footage may want different numbers. The tool is there to check.
+- Mean error says little about swirls (a blur scores well); the pictures had to be looked at too. Some places still look soft, and one pair (the second of the glitch moment) is still about as far from the truth as the plain frame, mostly from fast waving hands.
+- The share that falls back (the report's number) does not count these places, since they are not the plain frame.
+- Two variations the logic review suggested were scored on the real pairs and left out: letting the existing overall-motion check also gate the new rule (11.09 against 10.72; the glitch pair got worse, 8 to 13) and ignoring it near the picture's edge (10.99). The risk they were meant for stays: a thing moving its own way with grain or an exposure change can have part of its edge pulled to the overall motion (a faint ghost at its edge); the made-up busy test picture was unchanged (5.74, 5.46, 2.44% against 5.83, 5.57, 2.31%).
+- The Alt+Shift+I view is now called "fallback in red, doubt in blue".
+
+### Tested, and not
+
+- Checked here: the 16 real pairs (scores above, and the pictures before and after for the glitch moment and for the walk-in with the truss); every synthetic test (the busy picture with moving objects: its error 5.74, 5.46, 2.44% against 5.83, 5.57, 2.31% before; the posts moving twice as far 1.51 against 1.68%; cuts as before; the self-check).
+- Not checked: how it looks in motion, on your screen and in HDR, which is the only real test; other footage; the cost on your card (it adds one 1-texel read and a little arithmetic per pixel in the mixing pass, which was well under a millisecond before).
+
+## 1.3.7 - 2026-10-04
+
+### Added
+
+- **A recorder of what was actually put on screen (Alt+Shift+R, Stats on).** Your screen recordings could not show the made-up pictures (a 30 fps recording only catches every other refresh, and the 60 fps clip repeated every picture). Now the first press turns a recorder on (it needs Smooth motion to be making up pictures); it keeps the last 60 pictures that were drawn, each shrunk to 800 wide at most, and a line for every refresh that drew: what kind of picture (the earlier frame, the later frame, or a made-up one and how far between), the frame times either side, and the gap since the last refresh. A second press, just after you see a glitch, saves them as a zip in Downloads (the pictures in order, `shown.txt`, `info.json`, the report). Nothing is sent anywhere, no new permission. It holds about 90 MB of GPU memory at 800x450 while on (the size is capped for tall pictures too), turns itself off after ten minutes unused, and says in `shown.txt` how old the newest picture was if Smooth motion has stopped since.
+- The pictures are what Smooth motion drew (the made-up ones as they were made, the real frames as they were copied), before the colour pass, so they look like the SDR picture, not the HDR one.
+
+### Changed
+
+- The frame saver (Alt+Shift+C) and the recorder now finish through one piece of code (the info file, the report, the zip name and the download), so the two cannot drift apart.
+
+### Found and fixed in review
+
+- The recorder's memory had no cap for a tall picture; the size is now limited in both directions. A picture that is not being made smaller is copied exactly (it was slightly blurred by the shrinking pass). The log keeps four times as many lines as there are pictures, so the log does not run out before the pictures do. Comments and `shown.txt` say "refreshes that drew", not "the last second" (it is a second only at 60 Hz).
+
+### Found and not changed
+
+- The recorder stays on after a save, until ten minutes pass, so another glitch can be caught; it holds the GPU memory meanwhile.
+- If Smooth motion stops while it is on, it stays on and records nothing new; a save says so.
+- The shrinking pass is four taps near the middle of each target pixel, not a proper box filter: at 4K it will alias on fine detail. Good enough to look at.
+- With two videos converting, it records the first one that is making up pictures.
+
+### Tested, and not
+
+- Checked here: in headless Chromium (software GPU, with a test build that does not give up for being slow) a real key press turns it on, a second one saves a zip whose pictures are right (real and made-up, in order, with the log naming each), a made-up key press does nothing, and a 1080p source is shrunk correctly; the frame saver still works after sharing code; every earlier test passes.
+- Not checked: on your card. Memory use at 4K; whether Brave asks about the download; and, above all, what the pictures show: whether the glitch you saw is in a made-up picture or in the order they were shown.
+
+## 1.3.6 - 2026-10-04
+
+### Added
+
+- **A frame saver, so Smooth motion can be tuned on your real footage.** With Stats on, **Alt+Shift+C** (a real key press only, like the other Stats keys) saves four frames in a row of the video that is playing, exactly as the converter holds them (never wider than 1920), with an info file (version, site name, sizes, frame times, frame rate, refresh interval, the main settings) and the report, into one zip in Downloads. It is made in the page: nothing is sent anywhere and no new permission is used. The frames are read back from the GPU as they are copied, so they are real neighbours. It needs Every refresh on (it says so in the report's history otherwise), waits while the converter is easing off (every other frame is let go then), stops if the picture changes size mid-way, and gives up after 8 seconds if the video stalls.
+- **`tests/pairs.mjs`**: runs the real motion code (`interp.js`) on those frames in headless Chromium and writes, for each neighbouring pair, the made-up picture at the positions you ask for, where it fell back (red), the motion found, and the numbers (mismatch, fastest motion, overall motion, share that fell back). Thresholds can then be judged on your footage and not on made-up pictures.
+- Tests: `capture.test.mjs` (CRC, zip read back by Python, 10-bit to 8-bit) and `pairs.test.mjs` (a made-up pair with a known 12 and 5 px shift: found within half a pixel, the picture made at the halfway point is within 2.5 of 255 of the truth where the plain frame is 18.7 off).
+- PRIVACY.md and README say that the saver writes a file to Downloads.
+
+### Found and fixed in review
+
+- The download link was first put on the page for a moment, where a page could have seen it and read the zip. It is now never on the page, and its address is let go after 5 seconds.
+- With Every refresh off the saver would have started and then quietly timed out; it now says why it did not start. A size change mid-save, and frames too large to read back (over 256 MB each), are refused. The pair tool skips a mismatched pair instead of stopping.
+
+### Found and not changed
+
+- The report in the zip has your graphics card, browser and machine details, as it always has when you copy it. Frames show what was playing. Look before sharing.
+- The saved pictures are the converter's copy of the frame (SDR, before any picture change), cut from 10 to 8 bits by dropping the low bits, and made smaller if wider than 1920; at 4K the pair tool therefore sees a smaller picture than the converter. Its numbers are measured on a coarse grid and should hardly change.
+- If more than one video is playing, the first one that is being converted is saved.
+- The browser may ask about, or block, a second automatic download from the same site; not seen in testing here.
+
+### Tested, and not
+
+- Checked here: a real key press in headless Chromium saves a zip of four correct PNGs (right colours, frame times in order), the info file and the report; a made-up key press and Stats off do nothing; Every refresh off is refused with a reason; the page sees no link added; the zip opens in Python with every checksum right; the pair tool recovers a known shift and makes the right picture; the older shader and timing tests and the popup (unchanged) still pass.
+- Not checked: on your card and a real 4K video (the frames will be large: about 130 MB of GPU memory is held for a moment while saving at 4K); whether Brave asks about the download; how long the save takes at 4K (it should be a second or two).
+
+## 1.3.5 - 2026-10-04
+
+### Fixed
+
+- **Fast motion was beyond what the search could follow.** The 1.3.4 report on a 1080p 30 fps video had the fastest motion at 58 px typically and 79 px at most, on a grid 480 wide, against a reach of about 57 px (12% of the picture's width in a frame): nearly every frame had something moving at or past the limit, where the match found is wrong, the footage matched worse than the others (0.035 typically, 0.065 in the worst twentieth) and made-up pictures can only be wrong. The reach is now about 105 px (22% of the width a frame): the search at the coarsest level goes 6 texels either way where it went 3 (13 by 13 shifts there instead of 7 by 7, on a 30 by 17 picture: negligible), and the search for the overall motion 24 texels either way where it went 12 (49 by 49 shifts at the 120x68 level: about 2400 pixels each reading about 2000 texels twice, a millisecond or so on a card like yours). On made-up pans of 75 px (80 of 512) and 94 px (100 of 512), the overall motion found is within a pixel of the truth and the picture is within 1 to 2% of it; before, those were beyond the search.
+- **The test for a cut had to move with it.** A wider search finds matches in pictures it would have called unrelated, so the frame as a whole is now called a cut from a mismatch of 0.065 to 0.088 (was 0.07 to 0.10). On made-up cuts between unrelated pictures (noise to a scene, a scene to a busy picture, a busy picture to noise) the mismatch is 0.088 to 0.092 and the nearer frame is used exactly. Your last report's worst twentieth was 0.065, which is below the range.
+- The report's "it can follow about N" is now worked out from the search's constants, not typed in.
+
+### Found and not changed
+
+- The "fastest thing moved" figure is the largest motion found at the coarsest level anywhere in the picture, so one wrong match in a flat patch can set it. If it still reads at or near the reach (105) typically, the footage really is that fast or the figure is being set by wrong matches; the Alt+Shift+I motion view shows which.
+- A real cut between two scenes that are alike in brightness and detail may match at less than 0.088 and be made up across rather than cut; the made-up picture then ghosts for the one frame.
+- The earlier pair test for a cut (the same picture shifted far away) is no longer a cut at this reach, and was replaced by pairs of unrelated pictures.
+
+### Tested, and not
+
+- Checked here: the overall motion and picture on very fast made-up pans (75 and 94 px, and both directions, and a mostly flat picture); cuts between three pairs of unrelated pictures; every earlier shader and timing test; the extension running end to end in headless Chromium.
+- Not checked: on your card. The wider search should cost about a millisecond more (the report's "working out the motion" line, 2.2 ms typically in 1.3.4, will show it), and on your fast-moving video the "fastest thing moved" line should now sit well under 105 and the match should read better.
+
+## 1.3.4 - 2026-10-04
+
+### Fixed
+
+- **Most of what moved looked like the video's own frame rate (30 fps) with Smooth motion on.** (Reported on a 1080p 30 fps video whose frames matched noticeably worse than the 4K one before: 0.030 typically against 0.002.) The rule that decides where the made-up picture cannot be trusted and the plain frame is shown instead had a term for how much the two pictures it makes differ, point by point. Fine detail, grain and a slight change of exposure make that large even where the motion found is exactly right, so the inside of everything that moved fell back to the plain frame, which at the halfway picture is the next frame unmoved: the picture steps at 30 fps wherever there is motion. On a made-up busy picture (a pan across detail, two things moving their own ways, grain, a 5% change of exposure) 13% of the picture fell back, all of it inside the things that moved, though their motion was found within half a pixel.
+  - That term is gone. A place is now in doubt only when the match at that place is well below what is usual for the picture as a whole (about two to three and a half times the picture's usual mismatch, and above a floor of 0.04 to 0.09), so footage that matches less well everywhere is not judged against a clean picture's standard. The usual mismatch is read from the finest level of the motion at every eighth texel each way.
+  - On the busy test picture the fallback now falls on the outlines of the moving things only, where something is being covered or uncovered and nothing can be right (about 4.7% of the picture; 8.4% of its middle).
+  - The test for the picture falling back where even the overall motion disagrees is kept but gentler (0.10 to 0.28, was 0.08 to 0.22); the cut test (0.07 to 0.10) is as it was.
+- Moving things on the busy test picture have their own motion found (first thing: -46.9 px found, -46.9 true; second: 27.7, -8.7 found, 28.1, -8.4 true), not the pan's.
+
+### Added
+
+- **The report now says how much of the picture fell back to the plain frame**, read from the GPU for one pair in four at the halfway picture: typically and in the worst twentieth. This is the figure that tells whether Smooth motion is making up the movement or leaving it at the video's own frame rate. It is the share of the whole picture (the part of it in the red of the Alt+Shift+I view).
+- Tests: the busy picture (what moves is made up; the things' own motion is found).
+
+### Found and not changed
+
+- The picture error on the busy test picture is 5.6 to 5.8% at a 20 px pan, against under 1% on the plainer pictures. It is mostly the fine detail of the things moving at two and a half times the pan, which the plain two-tap resampling blurs a little; a sharper resampling would help and costs more GPU time.
+- Where something is covered or uncovered, the plain frame is still shown, as it must be. At a fast move the band is as wide as the move.
+
+### Tested, and not
+
+- Checked here: all the shader tests (plain and busy pictures, the overall motion, cuts, edges, and the new busy-picture cases); the timing tests; the new read-out working in the extension in headless Chromium (on the software GPU's unrelated test video it read 8.8% typically, which says only that the path works).
+- Not checked: your video on your card. In your next report, look at the new line: if the share that falls back is a few per cent and the picture still looks like 30 fps, the cause is something else, and the report will say so.
+
+## 1.3.3 - 2026-10-04
+
+### Fixed
+
+- **Red, flickering bands at the sides of the picture on panning shots** (the "fallback" view, Alt+Shift+I), which on the normal view are patches of the plain frame next to made-up picture half a move out of place: a tear. The cause was the second tier added in 1.3.2, the motion the whole picture agrees on. It was worked out as the average of the motions found, weighted by how well each matched, and a flat area (a smooth sky, a dark scene) matches any shift perfectly, so flat areas outvoted the rest: on a made-up picture that is mostly sky it found +3.5 px for a pan of -28 px, the wrong way, and on an ordinary scene it came out a fifth short. With the overall motion wrong, the sides, where the motion found locally is no good, had nothing to fall back on and showed the plain frame. Your report said the match was very good almost everywhere (0.002), which is what a flat or dark picture looks like.
+  - It is now found by trying every shift of the whole picture within the search range (25 by 25 shifts at the 120x68 level, read at every other texel) and taking the one that fits the whole picture best, with a parabola through it for the part of a texel; flat areas fit every shift equally and so do not decide. On made-up pans it is within about a pixel (of 480) of the truth, on a scene that is mostly flat sky as well as on an ordinary one, and vertical pans too.
+  - Two passes added per video frame (the cost of each shift, and the best of them); they run with the motion's other passes and are inside the same GPU timing.
+  - On the made-up pans the picture error fell too: a 30 px pan from 0.96% to 0.54%, the side the content enters from from 4.3% to 2.6%, and the share of the picture falling back to a plain frame from 1.6% to 0.
+- The "fastest thing moved" figure is unchanged (the largest motion found at the coarsest level).
+
+### Found and not changed
+
+- Your last report's fastest motion was 56 px on a grid 480 wide, at the edge of what can be followed (about 57). A pan faster than that is beyond the search and will fall back to plain frames, for the whole picture. Raising the reach costs GPU time; to be decided from a report in which the fastest motion is over the limit.
+- The overall motion is a shift of the whole picture. A zoom, a rotation or strong lens distortion at the sides still leaves places where neither tier fits, and they show the plain frame.
+
+### Tested, and not
+
+- Checked here: the overall motion against the truth on seven made-up pans (a scene, the other way, fast, a mostly flat scene, the other way, fast, a vertical pan), all within 2.5 px (of 480) and most within 1; all the earlier shader and timing tests; the extension running end to end in headless Chromium.
+- Not checked: on your video and your card, which is what matters. If the red bands are gone, or much smaller, in the Alt+Shift+I view on the same shot, it worked.
+
+## 1.3.2 - 2026-10-04
+
+### Fixed
+
+- **The edges of the picture during a pan.** What slides in at the side of the picture on a pan is in one of the two frames only. The made-up picture read both frames anyway, and for the one that did not have it the sampler repeated the last column of pixels, smearing the edge across the width of the move (at 4K and 100 px a frame, a streak 50 px wide). A made-up picture now uses only the frame that has the content where one of the two places to read from is outside the picture. On a made-up pan across a scene (sky, horizon, textured ground, posts, with noise new in every frame) the error in the outermost columns went from 7 to 10% to about 1% on the side the content leaves and about 4% on the side it enters; the middle of the picture is about 1%.
+- **Where the motion found at one place cannot be trusted, the picture now falls back on the motion most of the frame agrees on** (a pan) before it falls back on the nearer real frame. The nearer real frame is un-moved, so a patch of it next to made-up picture is half a move out of place: a seam, and on a pan that looks like tearing. Now a patch is only that when the overall motion is no good either (a cut, or something moving against the whole picture).
+
+### Added
+
+- **What the motion looked like on your video**, in the report's Smooth motion section (with Stats on): how badly the frames matched (typically and in the worst twentieth; 0.07 and above is partly treated as a cut, 0.10 and above wholly), how many frames were taken for a cut or partly, and how fast the fastest thing moved (it can follow about 57 px on a grid 480 wide, about 12% of the frame's width a frame). Read from the GPU for one frame in four. If the report says a lot of frames are taken for cuts during a pan, the thresholds are wrong for that footage; if the fastest motion is near or over 57 px, the pan is faster than the search can follow.
+- Alt+Shift+I's views are unchanged (the picture, red where it fell back to a real frame, the motion found). With this change red means a real frame was used instead of a made-up picture; places that use the overall motion are not red.
+- Tests: a pan across a scene, with the sides checked, and a case with posts moving at twice the speed (parallax).
+
+### Found and not changed
+
+- I could not make the tearing reported on panning shots appear in made-up pans on a software GPU, other than the edge streaks fixed above. Real footage has things the test pictures do not (parallax from depth, motion blur, grain, compression blocks, repeating patterns, things moving against the pan). The report's new motion read-out, and Alt+Shift+I on a pan, are how to tell which it is.
+- 35 frames in 950 came more than 20 ms late in the earlier report (about one a second), with the drawing at twice the rate. A small buffer in the clock (a refresh, adding about 16 ms to the picture's delay behind the sound) would absorb most of that; not done until it is clear that is what you are seeing.
+
+### Tested, and not
+
+- Checked here: the pan, parallax and edge cases above on a software GPU against the true picture (picture error 0.8 to 1.3%, sides under 4.5%, about 1% of the picture falling back to a real frame); all the earlier shader and timing tests; the new report line running in the extension in headless Chromium (it reads the motion's measurements back and shows them; on the software test video it rightly flagged motion beyond the search's reach).
+- Not checked: whether any of this removes the tearing you saw. It may not: the cause on real footage is not established.
+
+## 1.3.1 - 2026-10-04
+
+### Fixed
+
+- **Smooth motion shut itself off by mistake.** On a 4K 30 fps video on YouTube (Windows, Brave, 60 Hz) it turned on, then about six seconds later stopped with "working out the motion took 60 ms for a frame that lasts 33 ms: too slow for this GPU", every time. The safety check measured how long the page waited for the GPU to finish everything queued after each new frame. That includes the frame's copy, the drawing before it and the wait for the screen, so it said 36 to 60 ms of a job that takes the GPU a few. It now goes by the GPU's own timestamps: from the start of the first pass of the motion work to the end of the last, one frame in four, over twelve measurements, and it stops only if that is half a frame's time or more. Where a GPU cannot time itself, the old measure is the only thing to go by, and counts only at one and a half frames.
+- The report's Smooth motion section gives both figures (the GPU's own and the page's wait), so the two can be compared on a real card.
+
+### Found and not changed
+
+- With Smooth motion on, the drawing happens on every refresh, so a 4K picture costs the GPU twice what it did at 30 frames a second. On the report that prompted this the draw alone was about 8 ms at 4K (with the picture drawn at full 4K), which at 60 a second is a big share of the GPU; Auto quality may lower the size when it is too much.
+
+### Tested, and not
+
+- Checked here: the GPU timing in headless Chromium on a software GPU (it reports the motion's time from the GPU's own clock, and the give-up still happens, with the new wording, when the motion really is too slow: about 700 ms there against a 200 ms frame); the timing logic and shader tests as before.
+- Not checked: on your card. That is what to look at in the next report: the Smooth motion lines should now show a small GPU time and the feature should stay on.
+
+## 1.3.0 - 2026-10-04
+
+### Added
+
+- **Smooth motion** (frame interpolation), in the popup's main view, Off by default. For a video with fewer frames than the screen has refreshes (30, 25 or 24 frames a second on a 60 Hz screen, 30 on 120 or 144), the pictures between two frames are made up from the motion in the video, so every refresh shows something new.
+  - How: for each new frame the motion since the one before it is found on the GPU by block matching on small luminance copies (480x270, 120x68, 30x17, coarse to fine, with sub-pixel refinement). For each refresh in between, the picture is made from the two frames each slid part of the way along that motion, and blended. Where the two disagree (a wrong match, something uncovered), or the frame as a whole did not match (a cut), the nearer real frame is used as it is, so a failure looks like the old judder and not a smear. The made-up picture goes through the rest of drawing (analysis, upscaling, the HDR conversion, split view, a model) as if it were a video frame. See README, "Smooth motion", and `interp.js`.
+  - Timing: a steady clock of its own decides when each pair of frames begins, so the video moves the same amount every refresh at 24, 25 and 30 frames a second alike. Going by when frames happened to arrive moved it in uneven steps (they arrive on the grid of refreshes), which the first version did.
+  - What it costs: the picture runs one video frame behind the sound (about 33 ms at 30 frames a second); fast action, hair and moving text can smear or wobble; the GPU draws a picture every refresh, so a 30 fps video costs about what a 60 fps one does. Auto quality and the upscaler's step-down count the pictures drawn, not the video's frames.
+  - Safe by default: it needs Every refresh, is used only while the video's frame rate is well under the screen's refresh rate (a frame lasting at least 1.45 refreshes to come on, 1.3 to stay), and not while the decoder is falling behind. Before it is first used on a GPU it checks itself on a made-up pair of frames with a known motion; if the result is wrong it is not offered there. If working out the motion takes the GPU most of a frame's time (0.8 of it, over eight frames) it stops by itself and the report says why; switching it off and on again in the popup, or a new video in the same player, tries again.
+- **Diagnostics for it.** With Stats on, the report has a Smooth motion section: whether it is on, and if not why not; the frame rate and refresh rate; the picture's delay behind the sound; how many video frames and made-up pictures there have been since it came on; how many frames came more than 20 ms late, how many were skipped to catch up, how many times the clock had to start again, and how many gaps (seeks, stalls) it did not make up across; how long working out the motion takes the GPU; and the result of its self-check. The badge says whether it is on. **Alt+Shift+I** (with Stats on) goes round three views for judging it: the picture, the places where it fell back to the nearer real frame (in red), and the motion it found (colour for direction, strength for how far). The key works only from a real key press, like the other shortcuts, and saves nothing.
+- **`tests/`**, the start of automated checks, run with `node tests/schedule.test.mjs` (the timing logic against pretend screens of 60, 75, 120 and 144 Hz; no GPU) and `node tests/interp.test.mjs` (the real shaders on a software GPU, with made-up frames of known motion). `tests/README.md` says how. Not part of the extension.
+
+### Changed
+
+- The main view is 36 px taller with the new row (466 px, from 430); the settings view is as it was (567 px, 594 px with the Match or Custom row showing).
+- Auto quality, with Smooth motion on, counts the pictures drawn per second (the refresh rate) where it counted the video's frames, for the pixel budget and for how much of a frame's time the GPU's work may take.
+- While Smooth motion is on, the video's frame copies are four where they were three, and one more picture-sized texture holds the made-up picture. More GPU memory, by about two picture-sized textures.
+
+### Review
+
+This is the first update to go through the full checks (CLAUDE.md): three independent reviews (security, logic, readability), each finding checked against the code before it was acted on. Fixed because of them:
+
+- After giving up as too slow, switching Smooth motion off and on gave up again at once, on stale timings; the timings and counters now start afresh.
+- With a model (Guided or Model) at 24 or 25 frames a second, the model was not re-run for most frames, because the first picture of a pair was usually a made-up one; it is now.
+- A queue of more than one waiting frame (after a decoder hiccup) never drained, leaving the picture further behind the sound for good; the extra frames are now skipped.
+- Playback at other than normal speed was not taken into account in deciding whether to make pictures up, or in the size of the gap between frames.
+- The "on" state and the doubled picture count could go stale while paused or with Every refresh off, keeping Auto quality lower than needed.
+- The self-check could leak what it made if it failed part-way; the unused texture is freed when smooth motion stops; the test server only listens on this machine; counters, comments and docs that disagreed with the code (some of them about the earlier changes) corrected.
+
+### Found and not changed
+
+- Auto's choice of Best upscaling (for video under 45 frames a second) does not look at Smooth motion; the step-down by measured GPU time handles it (see above), but the first seconds may run the bigger network at the screen's rate.
+- The cut and fallback thresholds were set on made-up frames (motion gives a coarse mismatch of 0.04 to 0.05, cuts 0.105 and up). Real footage, with grain and lighting changes, may need them moved.
+- The time Smooth motion's GPU work takes is as seen from the page, so it includes waiting for the GPU's other work; its give-up check may be early on a GPU that is already busy with heavy 4K upscaling.
+- `docs/themes.png` still shows Rose (from 1.2.5).
+
+### Tested, and not
+
+- Checked here: the shaders on a software GPU with made-up frames (motion found within 0.1 to 0.5 px typically, the picture at the halfway point within 0.04 to 0.76% of the true one for motions from nothing to about 8% of the frame's width, a cut using the nearer frame exactly); the timing logic against pretend screens of 60, 75, 120 and 144 Hz and video of 30, 25, 24 and 23.976 frames a second, with late and dropped frames, a seek and a changed playback speed (video time advances the same amount every refresh); the whole feature running in the extension in headless Chromium (it turns on, passes its self-check, gives up with the reason when too slow, the key works from a real press and is ignored from a made-up one, the popup saves and reloads the setting and shows Off for a stored value it does not know); popup heights.
+- Not checked: **anything on real video, a real GPU or a real display.** The software GPU is far too slow to play video in real time, so the pacing between frames could only be checked in the timing logic and not live. How it looks (smearing, grain taken for motion), how fast it is, whether the one-frame delay is noticeable against speech, and how it behaves on 120 and 144 Hz screens are for you to judge.
+
+## 1.2.6 - 2026-10-04
+
+Fixes from a review of the whole extension for logic, security and readability problems, each checked against the code before it was changed.
+
+### Fixed
+
+- **Fullscreen on a bare video rebuilt the overlay about twice a second.** When a site fullscreens the `<video>` itself, the overlay is moved into a box above it (the top layer). The once-a-second check for "the page moved the video" then found the overlay was not beside the video, took that for a move, and destroyed the session; the next scan made a new one, and so on. Each rebuild discarded the stats and the half-rate and beat state. It now checks that the box is still on the page. This is the 1.2.2 "moved video" check going wrong, so 1.2.2 to 1.2.5 are affected. Measured in headless Chromium with a made-up video: about 7 new elements a second added to the page before, none after the first move.
+- **Half rate stuck when "Every refresh" was switched off during an episode.** Nothing steers without Every refresh, so the episode stayed on record: the badge said "every other frame", Auto quality could not step down, and when Every refresh came back the stale episode could be judged as having failed and counted against trying again. Switching it off now ends the episode (every frame is taken then anyway), without counting it as a failed try; the report lists it as "stopped (Every refresh was switched off)".
+- **A failed unlock rule stopped the clean-up after it.** If making a rule failed, the queue was left failed, and the next "switch unlock off" or "tab closed" clean-up was skipped, so rules stayed until the browser was closed. Checked with a made-up failure: the queue was rejected before, fine after.
+- **A colour picked and a theme clicked within a quarter of a second** could end up with the first theme saved over the second. The pending save is cancelled by the click.
+
+### Changed
+
+- README: the Alt+Shift+M row says it goes round shader, guided and model; "three switches" for the site card; the permission is named `declarativeNetRequestWithHostAccess`; the Files table covers `theme.js`, what `ui.css` and `background.js` do, and what `icons/` holds; the model has a preparation step and eleven passes. Comments in `background.js`, `pacer.html` and `ui.css` that no longer matched the code are corrected, and the 1.2.5 entry's popup heights agree with each other.
+- `CLAUDE.md` added: the owner's working rules and the checks every major update gets, so a new Claude session picks them up. Not part of the extension (the zip does not include it).
+
+### Found and not changed (low)
+
+- Unlock rules cover any media the unlocked site asks for, not only the one video's host (it could be narrowed to the video's host).
+- The split-line drag accepts made-up pointer events from a page (cosmetic: the split position).
+- A GPU device is left behind when starting fails part-way; a model removed while it was loading stays on the GPU until the device is lost; small pacing-worker clean-up gaps; `selfTestReport` is saved and never read; a model file with a layer missing its shape shows a raw error.
+- `docs/themes.png` still shows Rose.
+
+### Tested, and not
+
+- Checked here, in headless Chromium with the extension loaded and an HDR display faked: the fullscreen rebuild reproduced with the 1.2.5 code and gone with this one; the failed-rule queue and the colour-versus-theme race reproduced with 1.2.5 and fixed.
+- Not checked: the half-rate fix (an episode can't be provoked without a real decoder under load; it was made by reading the code), and none of it on real video, Windows or a real display. For fullscreen, try a video file opened straight in the browser: it should now stay steady.
+
 ## 1.2.5 - 2026-10-04
 
 ### Changed
@@ -9,13 +298,13 @@ All notable changes to Headroom HDR (called SDR to HDR Video before 0.11). Versi
 - **The Rose theme is replaced by Match**, placed second to last, just before Custom. Pick one colour and the second is worked out from it (turned 75 degrees round the colour wheel, about as far as Aurora turns its two, at the same lightness, for a bolder pair), so the pair always goes together. The glow, the light behind the glass, the popup's logo and the toolbar icon are all made from the pair, the same way as for Custom. Its colour is kept separately from Custom's two, so changing one doesn't touch the other. Match starts on pink.
 - Anyone who had Rose chosen is moved to Amber.
 - The two keyboard shortcut lines at the bottom of the settings no longer touch: there is a few pixels of air between their key boxes. The settings view is 567 px (594 px with the Match or Custom row showing) of the 600 a browser allows, so about 6 px is left.
-- **A glass colour picker for Match and Custom**, in place of the browser's own colour dialog (which can't be styled, and can close the popup while it is open). Click a colour box and a glass panel opens under the Colours card with a square for how vivid and how bright, a strip for the colour, and a box for a hex code. It floats over the cards below, so the popup does not grow (586 px with it open, as before). Works with the keyboard (arrow keys, Shift for bigger steps); Esc, a click outside, or choosing another theme closes it.
-- Only the extension's own colours change. The picture, and the popup's height (586 px with the Match or Custom row showing, as before), are as they were.
+- **A glass colour picker for Match and Custom**, in place of the browser's own colour dialog (which can't be styled, and can close the popup while it is open). Click a colour box and a glass panel opens under the Colours card with a square for how vivid and how bright, a strip for the colour, and a box for a hex code. It floats over the cards below, so the popup does not grow (594 px at most with it open, the same as with the colour row alone). Works with the keyboard (arrow keys, Shift for bigger steps); Esc, a click outside, or choosing another theme closes it.
+- Only the extension's own colours change. The picture is as it was.
 - README updated for the new theme. Its theme screenshot (`docs/themes.png`) still shows Rose.
 
 ### Tested, and not
 
-- Checked here, in headless Chromium with the extension loaded: the swatches are Amber, Ocean, Aurora, Match, Custom in that order; choosing Match shows its one-colour row, and a picked colour (dragged, typed as a hex code, or from the keyboard) is applied, saved, and gives the toolbar icon (the service worker) the same pair as the popup; a saved Rose falls back to Amber; no errors; the settings view is 559 px with other themes and 586 px with Match or Custom.
+- Checked here, in headless Chromium with the extension loaded: the swatches are Amber, Ocean, Aurora, Match, Custom in that order; choosing Match shows its one-colour row, and a picked colour (dragged, typed as a hex code, or from the keyboard) is applied, saved, and gives the toolbar icon (the service worker) the same pair as the popup; a saved Rose falls back to Amber; no errors; the settings view was 559 px with other themes and 586 px with Match or Custom, before the shortcut lines were spaced out (see above for the final figures).
 - Not checked: how the picker feels under a real mouse and how the glass looks in Brave (headless Chromium does not blur what is behind it, so the panel is made dense enough not to need it); the picker in the Aurora theme; how the Match colours look to you across the range of colours you might pick (very dark or very pale ones especially), and the toolbar icon in a real toolbar. The 75 degree turn is my choice, taken from how far Aurora's two colours sit apart; it's one number, easy to change.
 
 ## 1.2.4 - 2026-10-04

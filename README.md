@@ -89,7 +89,7 @@ The model runs once per video frame on a small copy of the picture, as GPU compu
 
 ### Per-site settings
 
-When the popup is opened on a web page it shows that site's hostname with two switches:
+When the popup is opened on a web page it shows that site's hostname with three switches:
 
 - **Turn off here** disables the extension on that site only.
 - **Unlock locked videos** is for sites where the popup reports a locked video; see the next section.
@@ -111,6 +111,7 @@ It does not work on DRM-protected video; nothing does.
 
 - **Enabled** (top-right switch): master on/off for all sites.
 - **Upscaling**: how a video with fewer pixels than your screen is made bigger. **Off** leaves it to the browser, which is soft. **Fast** is an edge-aware upscale in the style of AMD FSR 1. **Best** is FSRCNNX, the small trained network mpv users know (by igv): it doubles the picture, costs the GPU far more, and is used where the picture is made at least 1.3 times bigger. **Auto** (the default) uses Best at any frame rate, and with Performance on Auto steps down by itself if the GPU's own timing says it can't fit it in (the smaller size of the network, then Fast, then off); the next video on the page starts where the last one ended up. In a browser that doesn't let the GPU be timed, Auto keeps Best for video under 45 frames a second. With Performance on Best quality the bigger network is always used; with Fastest, upscaling is off.
+- **Smooth motion** (Off by default): for video with fewer frames than your screen has refreshes (30, 25 or 24 frames a second on a 60 Hz screen), the pictures between two frames are made up from the motion in the video, so every refresh shows something new and movement looks smoother. It works out where things moved between each pair of frames and slides the pixels part of the way; where that fails (a cut, something uncovered, movement too fast to follow) it shows the nearer real frame instead, so a failure looks like the old judder and not a smear. Costs: the picture runs one video frame behind the sound (about 33 ms at 30 frames a second); fast action, hair, fences and moving text can smear or wobble; the GPU draws a picture every refresh, so a 30 fps video costs about what a 60 fps one does. It needs **Every refresh** on, and it is used only while the video's frame rate is well under the screen's refresh rate. Before it is first used on a GPU it checks itself on a made-up pair of frames with a known motion, and if the result is wrong it is not offered; if it turns out too slow for the GPU it stops by itself and the report says so. With **Stats** on, **Alt+Shift+I** goes round three views for judging it: the picture, where it fell back to the nearer real frame (in red), and the motion it found.
 - **Performance**: how hard the extension works your GPU.
   - *Auto* (default) draws anything up to 4K at 60 frames a second at full size, and 4K at 120 at 1440p, scaled up. From there it goes by how long a frame's drawing actually takes the GPU, which it measures now and then: if that is more than half the time between two frames it steps down, to 1440p and then to 1080p with sharpening and debanding off. If frames are being lost while the GPU has time to spare, lower quality can't help, so it is left alone and the popup says the frames are being lost outside the GPU. In a browser that can't time the GPU, it steps down when frames are dropped for two measurements in a row (about six seconds). Steps that would change nothing on your screen are skipped. It starts afresh for each new video.
   - *Best quality* always renders at your screen's resolution with everything on.
@@ -137,7 +138,7 @@ It does not work on DRM-protected video; nothing does.
 |---|---|
 | Alt+Shift+H | Turn HDR conversion on or off |
 | Alt+Shift+S | Turn split view on or off |
-| Alt+Shift+M | Switch between the shader and your trained model |
+| Alt+Shift+M | Go round the methods: shader, guided, model (needs a loaded model) |
 
 Chrome may not assign these automatically when an unpacked extension is reloaded. Set or change them at `chrome://extensions/shortcuts`.
 
@@ -168,6 +169,18 @@ With the shader method, each frame goes through seven shader passes:
    - boosts colour, skipping skin tones;
    - rolls off anything brighter than the display can show.
 
+### Smooth motion
+
+With Smooth motion on, a video with fewer frames than the screen has refreshes gets pictures made up between its frames (`interp.js`). For each new frame B, with the frame before it A:
+
+1. B is shrunk to 480x270, 120x68 and 30x17 (luminance only), by the same passes the analysis uses.
+2. **Motion** is found by block matching, coarse to fine: every shift up to 3 texels at 30x17, then only shifts close to what the level above found at 120x68 and 480x270, with a parabola fitted for the part of a pixel. The result is, for each pixel of B, where it was in A.
+3. For each refresh between the two frames the picture is made from A and B each slid part of the way along that motion and blended, in three tiers. Where the motion found at a place is in doubt (its match there was poor, well below what is usual for that picture), the motion the whole picture agrees on (a pan, say) is used instead; it is found by trying every shift of the whole picture within the search range, at the 120x68 level, and taking the one that fits best, so that flat areas, which fit every shift, do not vote. The same overall motion is used where the motion found at a place is not the overall motion and the two pictures it would make disagree there (dark sky, a crowd, fine detail: places where any shift fits and the match says nothing, which came out as warped swirls on real footage); a thing really moving its own way also differs from the overall motion, but its two pictures agree. Where that disagrees too, or the frame as a whole did not match (a cut), the nearer real frame is used as it is, so a failure shows as the old judder and not as a smear. Where one of the two places to read from is outside the frame (what slides in at the edge on a pan), only the other is used.
+
+The picture then goes through the rest of drawing as if it were a video frame: analysis, upscaling, the conversion to HDR. A steady clock of its own (not the arrival of frames, which land on the grid of refreshes) says when each pair begins, so the video moves the same amount every refresh. At 30 frames a second on a 60 Hz screen the first refresh of each pair is the real frame and the second is the picture halfway.
+
+The motion is worked out once per video frame; per refresh there is one mixing pass and the usual drawing. Before it is used on a GPU, a made-up pair of frames with a known motion goes through the same code and the result is checked; if it is wrong, smooth motion is not offered there. If working out the motion takes the GPU half of a frame's time or more (timed by the GPU itself) it stops by itself. Turning it off and on in the popup tries again.
+
 ### Performance
 
 The extension draws from the page's own scripting thread. While a video plays it looks at it on every refresh of the screen; a frame it hasn't seen is copied into a texture of its own and queued, and one queued frame is put on screen per refresh.
@@ -192,7 +205,7 @@ With **Stats** switched on the report goes deeper. The GPU is timed on every fra
 
 With Stats on, runs are kept across a reload of the page for half an hour, so the one report at the end has both.
 
-Three keys work while Stats is on, including in fullscreen, and the report counts hitches separately for each setting they switch between: **Alt+Shift+O** switches Hide original, **Alt+Shift+P** switches Every refresh, and **Alt+Shift+A** starts or stops a test that switches Pacing off and on in 30-second turns.
+Six keys work while Stats is on, including in fullscreen, and the report counts hitches separately for each setting they switch between: **Alt+Shift+O** switches Hide original, **Alt+Shift+P** switches Every refresh, and **Alt+Shift+A** starts or stops a test that switches Pacing off and on in 30-second turns. **Alt+Shift+I** goes round the views for judging Smooth motion (see above); it changes nothing that is saved. **Alt+Shift+C** saves four frames in a row of the video that is playing (as the converter holds them, never wider than 1920), with a small info file and the report, as one zip in your Downloads folder, so that Smooth motion can be tuned on real footage with `tests/pairs.mjs`. It needs Every refresh on. **Alt+Shift+R** is a recorder of what was put on screen with Smooth motion on: the first press turns it on (it keeps the last 60 pictures that were drawn, shrunk to 800 wide, and a log of every refresh), and a second press, just after you see a glitch, saves them with the report as a zip. It turns itself off after ten minutes, and keeps about 90 MB of the GPU's memory while it is on. The zips are made in the page and goes nowhere by itself; it holds what was playing, so look at the frames before you share it.
 
 On Windows (or anywhere with Stats on), while a video of 45 frames a second or more is being converted, the browser's GPU thread is asked directly, and a beat is held as soon as it shows the hand-over stuck: a worker puts a question to the browser's GPU process that takes no work to answer, about thirty times a second, and times the answer. The answer has to come from the one thread that also hands redraws to Windows, so while a hand-over is stuck the answer arrives with the next screen refresh and not before. The report says how often that happened with pacing on and off, lists each time the hand-over was stuck (when, for how long, and how soon a beat followed), and has a small table of how long the answer took at each moment of the refresh, which shows at what moment the browser is busy handing over.
 
@@ -204,7 +217,7 @@ The extension also keeps its background work light while a video plays: looking 
 
 `expansionGain()` in `shader.js` is the one function that decides how much brighter each pixel gets. With a model loaded and selected, that decision comes from the model instead, and the rest of the main pass is unchanged.
 
-The model is a small convolutional network (about 52,000 weights). Each video frame is shrunk to 480x270 and run through it in eleven compute-shader passes (`model.js`). The network's picture is always 16:9; a video of another shape sits in it with black bars, unstretched, which is how the trainer showed it such films. It does not output a picture. It outputs a 120x68 map of brightness curves: at each spot, four numbers giving the gain for pixels of four brightness levels. The main pass reads each pixel's gain from the curve at its position, so the per-pixel cost is one extra texture read.
+The model is a small convolutional network (about 52,000 weights). Each video frame is shrunk to 480x270 and run through it in a preparation step and eleven compute-shader passes (`model.js`). The network's picture is always 16:9; a video of another shape sits in it with black bars, unstretched, which is how the trainer showed it such films. It does not output a picture. It outputs a 120x68 map of brightness curves: at each spot, four numbers giving the gain for pixels of four brightness levels. The main pass reads each pixel's gain from the curve at its position, so the per-pixel cost is one extra texture read.
 
 The curves are eased over about a tenth of a second so the picture doesn't flicker from frame to frame; where they change a lot at once, as at a scene cut, the new value is used straight away.
 
@@ -241,7 +254,7 @@ Messages from the extension appear in the page's DevTools console, prefixed `[He
 ## Permissions
 
 - **Access to all sites**: the content script has to run on any page that might contain a video.
-- **declarativeNetRequest**: used only by **Unlock locked videos**, and only on sites where you switch that on, to add the response headers that let a video be read.
+- **declarativeNetRequestWithHostAccess**: used only by **Unlock locked videos**, and only on sites where you switch that on, to add the response headers that let a video be read.
 - **storage**: saves your settings, and a trained model if you load one, locally. Nothing is synced or sent anywhere.
 - **One page any site may load** (`pacer.html`, a web-accessible resource): the frame that pacing runs in has to be loadable inside the page being watched. It holds nothing and does nothing but pace that page's own drawing; a site could tell from it that the extension is installed.
 
@@ -261,17 +274,21 @@ The extension makes no network requests.
 | `pacer.html`, `pacer-frame.js` | The extension's own frame, one dot big and see-through, put into a page that is converting fast video. Its workers can't be started from the page itself on sites like YouTube. |
 | `pacer-worker.js` | The four workers in that frame: one paces, one asks the GPU thread, one keeps time for those two, one keeps the browser's timers fine. |
 | `model.html`, `model-page.js` | The page for loading or removing a trained model. |
-| `background.js` | Handles the keyboard shortcuts, and the header rules for unlocking videos. |
+| `background.js` | Handles the keyboard shortcuts, the header rules for unlocking videos, the colouring of the toolbar icon, and hands the FSRCNNX files to the page that asks for them. |
+| `theme.js` | The colour themes (Amber, Ocean, Aurora, Match, Custom): puts the chosen one on every extension page and colours the popup's logo. Its colour maths is repeated in `background.js` for the toolbar icon; keep the two in step. |
 | `popup.html`, `popup.js` | The settings popup. |
 | `calibrate.html`, `calibrate.js` | The display calibration page. |
-| `ui.css` | Shared styling for the popup and calibration page. |
-| `icons/` | Generated raster icon artwork, browser sizes and colour variants for the four themes. |
+| `ui.css` | Shared styling for the popup, the calibration page and the model page. |
+| `icons/` | The packaged icon in four sizes, and its SVG artwork. The toolbar icon and the popup's logo are recoloured from it for the chosen theme as they are drawn. |
 | `CHANGELOG.md` | What changed in each version. |
 | `PRIVACY.md` | The privacy policy: nothing is collected or sent. |
 | `upnet.js` | Reads the FSRCNNX shader files and turns their passes into WGSL, for the Best level of Upscaling. |
+| `capture.js` | The frame saver and the recorder (Alt+Shift+C and Alt+Shift+R, Stats on): turns the GPU's frames into PNGs and packs them with a note and the report into a zip, and has the one small pass that shrinks pictures for the recorder. The frames are read back in `content.js`. |
+| `interp.js` | Smooth motion (frame interpolation): the block-matching and mixing shaders, the clock that decides which picture goes on each refresh, and the check it runs on itself before it is used. |
 | `third_party/fsrcnnx/` | The FSRCNNX shader files by igv, unchanged, under the LGPL 3 (their licence texts are beside them). Not under the MIT licence of the rest. |
 | `LICENSE-FSR.txt` | The licence of AMD's FidelityFX Super Resolution 1, which the upscaling pass is a port of. |
 | `docs/` | Screenshots used in this README. |
+| `tests/` | Checks that run in headless Chromium or plain Node (see `tests/README.md`). Not part of the extension. |
 
 ## Testing status
 
@@ -282,6 +299,8 @@ Smoothness was worked out on that same machine, in Brave on Windows 11, with 4K 
 Pacing was checked in headless Chromium on Linux with browser traces: the browser's drawing moved from 0.1 ms to between 5 and 6 ms into each refresh and back when switched; a page with nothing to redraw stayed undrawn; an answer that came too late cost that one refresh the wait and nothing after it; a worker that hung was ignored by the browser after ten refreshes; and on a page that forbids workers and frames it runs all the same, from the extension's own frame; with sleeps made to run over, it doesn't start and says why. A made-up stuck hand-over was recognised by the worker that asks the GPU thread, with the right moment in the refresh. What none of that can show is the thing it is for: whether a later hand-over keeps Windows from getting stuck. That had not been run on Windows when this was written, and neither had the two things 0.10.11 does for Windows alone (keeping the frame's process out of the background, and keeping its timers fine): those were read out of the browser's source.
 
 The trained-model path was checked the same way: fed a real video frame, the GPU version of the network gives the same numbers as the PyTorch original (to within 0.000001) on a random model; models with known answers produce the expected brightness on screen, including at the right place in the picture for a video that isn't 16:9. Failures were also injected on purpose (while starting, while drawing, and unreadable frames) to check that conversion recovers. How a real trained model looks, and how fast it runs on real hardware, had not been checked when this was written.
+
+Smooth motion was checked in headless Chromium on a software GPU with made-up frames whose motion is known (`tests/`): the motion found is within about a third of a pixel, the picture made halfway is within about 0.1 to 0.8% of the true one, and a cut falls back to the nearer frame exactly. Its timing logic was checked against pretend screens of 60, 75, 120 and 144 Hz and video of 30, 25, 24 and 23.976 frames a second. What none of that can show is how it looks on real video (smearing on fast action, grain mistaken for motion, how the cut thresholds behave on real footage), how fast it is on a real GPU, and how the one-frame delay against the sound feels. None of it has been run on a real display.
 
 ## License
 

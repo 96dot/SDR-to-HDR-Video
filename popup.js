@@ -1,6 +1,6 @@
 const DEFAULTS = {
   enabled: true, peak: 4, strength: 0.5, sat: 1.15, soften: 0.5, sharpen: 0.35, gamut: 0.5, vivid: 0.5,
-  perf: 'auto', upscale: 'auto', poll: true,
+  perf: 'auto', upscale: 'auto', interp: 'off', poll: true,
   split: false, splitPos: 0.5, badge: true, stats: false, hideOriginal: true, pace: true, cue: 'ping',
   method: 'shader', splitLeft: 'original', splitRight: 'shader', modelInfo: null,
   headroom: 0, sites: {},
@@ -68,6 +68,7 @@ function show() {
   $('hideOriginal').checked = state.hideOriginal;
   $('perf').value = state.perf;
   $('upscale').value = state.upscale;
+  $('interp').value = state.interp === 'on' ? 'on' : 'off';
   $('poll').checked = state.poll;
   $('pace').checked = state.pace;
   $('cue').value = state.cue;
@@ -216,6 +217,8 @@ for (const ev of ['pagehide', 'blur']) addEventListener(ev, () => { clearTimeout
 for (const b of document.querySelectorAll('.swatch')) {
   b.addEventListener('click', () => {
     picker.close();
+    clearTimeout(colourSave);
+    colourPending = null;
     applyTheme(b.dataset.theme);
     try { localStorage.setItem('theme', b.dataset.theme); } catch (e) {}
     chrome.storage.local.set(b.dataset.theme === 'custom' ? { theme: 'custom', themeColours: customColours } : b.dataset.theme === 'match' ? { theme: 'match', themeMatch: matchColour } : { theme: b.dataset.theme });
@@ -275,6 +278,11 @@ $('perf').addEventListener('change', (e) => {
 $('upscale').addEventListener('change', (e) => {
   state.upscale = e.target.value;
   chrome.storage.local.set({ upscale: state.upscale });
+});
+
+$('interp').addEventListener('change', (e) => {
+  state.interp = e.target.value;
+  chrome.storage.local.set({ interp: state.interp });
 });
 
 // Changing the method also puts it on the right of the split, so the split

@@ -38,7 +38,7 @@
   --ok: #7fe0a8;
   --warn: #ff9a85;
 
-  /* pastel names kept for pages that still ask for them */
+  /* the old pastel names, kept for the calibration and model pages; they follow the theme's four light colours, not pastels */
   --lavender: var(--blob1); --pink: var(--blob2); --sky: var(--blob3); --mint: var(--blob4); --peach: var(--blob2);
 }
 
