@@ -34,6 +34,11 @@
 
 const SDR2HDR_FLOW_LEVELS = [SDR2HDR_LEVELS[0], SDR2HDR_LEVELS[1], SDR2HDR_LEVELS[2]];   // fine to coarse
 const SDR2HDR_FLOW_FORMAT = 'rgba16float';
+// How far the motion can be followed, in pixels of the finest level (480 wide):
+// the search at the coarsest level (6 texels of 16 pixels either way) plus what
+// the two finer levels add to it (2 texels of 4 pixels, 1 pixel). See
+// Sdr2hdrMotion.search. It was 57 until 1.3.5.
+const SDR2HDR_FLOW_REACH = 6 * 16 + 2 * 4 + 1;
 
 // Block matching. One shader for all three levels: q says how big a window
 // to compare, how far to search around the guess, and whether there is a
@@ -119,7 +124,7 @@ fn fs(in: VOut) -> @location(0) vec4f {
 //
 // GLOBAL1: one pixel for each shift (GLOBAL_RADIUS texels either way, so a
 // square of 2 * GLOBAL_RADIUS + 1), r = how badly the picture fits it.
-const SDR2HDR_GLOBAL_RADIUS = 12;
+const SDR2HDR_GLOBAL_RADIUS = 24;
 const SDR2HDR_GLOBAL1 = SDR2HDR_COMMON + /* wgsl */ `
 @group(0) @binding(0) var cur: texture_2d<f32>;
 @group(0) @binding(1) var prv: texture_2d<f32>;
@@ -289,7 +294,7 @@ fn mixAt(uv: vec2f) -> Made {
   // in at the edge is in one frame only) the other is all there is.
   let wg = select(0.0, smoothstep(0.10, 0.28, glo.diff), glo.both);
   // And everywhere, if the frame as a whole did not match: a cut.
-  let wc = smoothstep(0.07, 0.10, cutv.r);
+  let wc = smoothstep(0.065, 0.088, cutv.r);
 
   let tier = mix(loc.rgb, glo.rgb, wl);
   let w = max(max(wg * wl, wc), 0.0);
@@ -427,7 +432,7 @@ async function sdr2hdrInterpPipelines(device) {
 // The working memory of one video's interpolation, and the passes. The
 // caller hands over frames as "slots": { view, bgDown1 } (see content.js).
 class Sdr2hdrMotion {
-  static search = [[2, 3, 1, 1], [2, 2, 1, 0], [2, 1, 1, 0]];
+  static search = [[2, 6, 1, 1], [2, 2, 1, 0], [2, 1, 1, 0]];
   constructor(gpu, pipes) {
     this.gpu = gpu;
     this.pipes = pipes;
@@ -662,7 +667,7 @@ const sdr2hdrHalf = (h) => {
 // at t = 0.5 and compares them with what is known to be true.
 // Returns { ok, flowErr, flowSize, midErr, ms, why } with errors in pixels of
 // the flow grid (flowErr) and in 0 to 1 colour (midErr), or throws.
-async function sdr2hdrInterpSelfTestRun(gpu, pipes, mx, my, t, own, pattern, noise, dbg) {
+async function sdr2hdrInterpSelfTestRun(gpu, pipes, mx, my, t, own, pattern, noise, dbg, patternB) {
   const { device } = gpu;
   const W = 512, H = 288;
   const began = performance.now();
@@ -671,10 +676,10 @@ async function sdr2hdrInterpSelfTestRun(gpu, pipes, mx, my, t, own, pattern, noi
   const [FW, FH] = SDR2HDR_FLOW_LEVELS[0];     // the grid the flow is on
   const frame = () => { const t = device.createTexture({ size: [W, H], format: SDR2HDR_FRAME_FORMAT, usage }); keep.push(t); return { tex: t, view: t.createView() }; };
   const A = frame(), B = frame(), E = frame(), M = frame();
-  const card = (target, sx, sy, seed = 0) => {
+  const card = (target, sx, sy, seed = 0, pat = pattern) => {
     const ub = device.createBuffer({ size: 32, usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST });
     keep.push(ub);
-    device.queue.writeBuffer(ub, 0, new Float32Array([sx, sy, W, H, pattern, noise, seed, pattern > 3.5 ? 0.05 : 0]));
+    device.queue.writeBuffer(ub, 0, new Float32Array([sx, sy, W, H, pat, noise, seed, pat > 3.5 ? 0.05 : 0]));
     const bind = device.createBindGroup({ layout: pipes.card.getBindGroupLayout(0), entries: [{ binding: 0, resource: { buffer: ub } }] });
     const enc = device.createCommandEncoder();
     const rp = enc.beginRenderPass({ colorAttachments: [{ view: target.view, loadOp: 'clear', storeOp: 'store' }] });
@@ -684,7 +689,7 @@ async function sdr2hdrInterpSelfTestRun(gpu, pipes, mx, my, t, own, pattern, noi
   // A is the noise as it is; B is the same noise moved by (mx, my); the
   // truth at t is the noise moved t of the way.
   card(A, 0, 0, 1);
-  card(B, mx, my, 2);
+  card(B, mx, my, 2, patternB);
   card(E, mx * t, my * t, 3);
   for (const s of [A, B]) s.bgDown1 = device.createBindGroup({ layout: gpu.down1.getBindGroupLayout(0), entries: [{ binding: 0, resource: gpu.sampler }, { binding: 1, resource: s.view }] });
   const motion = (own.motion = new Sdr2hdrMotion(gpu, pipes));
@@ -791,10 +796,10 @@ async function sdr2hdrInterpSelfTestRun(gpu, pipes, mx, my, t, own, pattern, noi
 // Runs the check and lets go of everything it made, whether it passed or not.
 // pattern: 0 the smooth noise the check uses; 1 a scene (sky, horizon, ground)
 // to pan across. noise: how much new noise each frame has (0 for none).
-async function sdr2hdrInterpSelfTest(gpu, pipes, mx = 12 / 512, my = 5 / 288, t = 0.5, pattern = 0, noise = 0, dbg = 0) {
+async function sdr2hdrInterpSelfTest(gpu, pipes, mx = 12 / 512, my = 5 / 288, t = 0.5, pattern = 0, noise = 0, dbg = 0, patternB = pattern) {
   const own = { keep: [], motion: null };
   try {
-    return await sdr2hdrInterpSelfTestRun(gpu, pipes, mx, my, t, own, pattern, noise, dbg);
+    return await sdr2hdrInterpSelfTestRun(gpu, pipes, mx, my, t, own, pattern, noise, dbg, patternB);
   } finally {
     if (own.motion) own.motion.destroy();
     for (const x of own.keep) x.destroy();

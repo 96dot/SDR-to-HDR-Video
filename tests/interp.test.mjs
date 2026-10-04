@@ -85,14 +85,25 @@ for (const [name, px, py] of [['pan 20 px', 20, 0], ['pan 20 px and 6 px down', 
     `first ${o.object1.found} (true ${o.object1.true}), second ${o.object2.found} (true ${o.object2.true}), background ${o.background.found} (true ${o.background.true})`);
 }
 
-// A cut: the second frame is the first moved far beyond what can be matched.
-// The picture between them should be one frame or the other as it is, not a
-// blend of the two.
-{
-  const r = await page.evaluate(() => window.runSelfTest(0.37, 0.51, 0.3));
-  check('scene cut: the nearer frame is used, not a blend (t = 0.3)', r.errA < 0.02 && r.errB > 0.1, `differs from the nearer frame by ${(r.errA * 100).toFixed(2)}%, from the other by ${(r.errB * 100).toFixed(2)}%`);
-  const q = await page.evaluate(() => window.runSelfTest(0.37, 0.51, 0.8));
-  check('scene cut: the nearer frame is used, not a blend (t = 0.8)', q.errB < 0.02 && q.errA > 0.1, `differs from the nearer frame by ${(q.errB * 100).toFixed(2)}%, from the other by ${(q.errA * 100).toFixed(2)}%`);
+// Pans faster than the 57 px (of 480) the search followed until 1.3.5; footage reported
+// with its fastest motion at 58 px typically and 79 at most. A very fast pan is
+// followed now, and the overall motion found.
+for (const [name, px, pattern] of [['very fast pan (80 px of 512)', 80, 1], ['the same, the other way', -80, 1], ['very fast pan of a mostly flat picture', 80, 3], ['faster still (100 px)', 100, 1]]) {
+  const r = await page.evaluate(([a, p]) => window.runSelfTest(a / 512, 0, 0.5, p, 0.02), [px, pattern]);
+  const want = -px * 480 / 512;
+  check(`very fast: ${name}`, Math.abs(r.globalFlow[0] - want) < 3 && r.midErr < 0.03, `overall motion ${r.globalFlow[0].toFixed(1)} px (true ${want.toFixed(1)}), picture error ${(r.midErr * 100).toFixed(2)}%`);
+}
+
+// A cut: the second frame has nothing to do with the first (a different picture
+// altogether). The picture between them should be one frame or the other as it
+// is, not a blend of the two. (Until 1.3.5 a cut was made by moving the same
+// picture further than the search reached; the search reaches too far for that
+// now, and a far shift is a motion that can be followed.)
+for (const [name, pa, pb] of [['noise to a scene', 0, 1], ['a scene to a busy picture', 1, 4], ['a busy picture to noise', 4, 0]]) {
+  const r = await page.evaluate(([a, b]) => window.runSelfTest(0, 0, 0.3, a, 0.02, 0, b), [pa, pb]);
+  check(`scene cut (${name}): the nearer frame is used, not a blend (t = 0.3)`, r.errA < 0.02 && r.errB > 0.1, `differs from the nearer frame by ${(r.errA * 100).toFixed(2)}%, from the other by ${(r.errB * 100).toFixed(2)}% (mismatch ${r.cutValue.toFixed(3)})`);
+  const q = await page.evaluate(([a, b]) => window.runSelfTest(0, 0, 0.8, a, 0.02, 0, b), [pa, pb]);
+  check(`scene cut (${name}): the nearer frame is used, not a blend (t = 0.8)`, q.errB < 0.02 && q.errA > 0.1, `differs from the nearer frame by ${(q.errB * 100).toFixed(2)}%, from the other by ${(q.errA * 100).toFixed(2)}%`);
 }
 check('no page errors', errors.length === 0, errors.slice(0, 3).join(' | '));
 await browser.close();

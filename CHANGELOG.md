@@ -2,6 +2,25 @@
 
 All notable changes to Headroom HDR (called SDR to HDR Video before 0.11). Versions follow the number in `manifest.json`.
 
+## 1.3.5 - 2026-10-04
+
+### Fixed
+
+- **Fast motion was beyond what the search could follow.** The 1.3.4 report on a 1080p 30 fps video had the fastest motion at 58 px typically and 79 px at most, on a grid 480 wide, against a reach of about 57 px (12% of the picture's width in a frame): nearly every frame had something moving at or past the limit, where the match found is wrong, the footage matched worse than the others (0.035 typically, 0.065 in the worst twentieth) and made-up pictures can only be wrong. The reach is now about 105 px (22% of the width a frame): the search at the coarsest level goes 6 texels either way where it went 3 (13 by 13 shifts there instead of 7 by 7, on a 30 by 17 picture: negligible), and the search for the overall motion 24 texels either way where it went 12 (49 by 49 shifts at the 120x68 level: about 2400 pixels each reading about 2000 texels twice, a millisecond or so on a card like yours). On made-up pans of 75 px (80 of 512) and 94 px (100 of 512), the overall motion found is within a pixel of the truth and the picture is within 1 to 2% of it; before, those were beyond the search.
+- **The test for a cut had to move with it.** A wider search finds matches in pictures it would have called unrelated, so the frame as a whole is now called a cut from a mismatch of 0.065 to 0.088 (was 0.07 to 0.10). On made-up cuts between unrelated pictures (noise to a scene, a scene to a busy picture, a busy picture to noise) the mismatch is 0.088 to 0.092 and the nearer frame is used exactly. Your last report's worst twentieth was 0.065, which is below the range.
+- The report's "it can follow about N" is now worked out from the search's constants, not typed in.
+
+### Found and not changed
+
+- The "fastest thing moved" figure is the largest motion found at the coarsest level anywhere in the picture, so one wrong match in a flat patch can set it. If it still reads at or near the reach (105) typically, the footage really is that fast or the figure is being set by wrong matches; the Alt+Shift+I motion view shows which.
+- A real cut between two scenes that are alike in brightness and detail may match at less than 0.088 and be made up across rather than cut; the made-up picture then ghosts for the one frame.
+- The earlier pair test for a cut (the same picture shifted far away) is no longer a cut at this reach, and was replaced by pairs of unrelated pictures.
+
+### Tested, and not
+
+- Checked here: the overall motion and picture on very fast made-up pans (75 and 94 px, and both directions, and a mostly flat picture); cuts between three pairs of unrelated pictures; every earlier shader and timing test; the extension running end to end in headless Chromium.
+- Not checked: on your card. The wider search should cost about a millisecond more (the report's "working out the motion" line, 2.2 ms typically in 1.3.4, will show it), and on your fast-moving video the "fastest thing moved" line should now sit well under 105 and the match should read better.
+
 ## 1.3.4 - 2026-10-04
 
 ### Fixed
