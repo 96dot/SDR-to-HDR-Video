@@ -136,9 +136,9 @@ const iconMatchPair = () => {
   const hi = Math.max(r, g, b), lo = Math.min(r, g, b), l = (hi + lo) / 2, d = hi - lo;
   let h = 0;
   if (d) h = hi === r ? ((g - b) / d) % 6 : hi === g ? (b - r) / d + 2 : (r - g) / d + 4;
-  h = (h * 60 + 35 + 360) % 360;
+  h = (h * 60 + 75 + 360) % 360;
   const s = d ? d / (1 - Math.abs(2 * l - 1)) : 0;
-  const l2 = Math.max(0, l - 0.06);
+  const l2 = l;
   const k = (n) => (n + h / 30) % 12;
   const f = (n) => Math.round(255 * (l2 - s * Math.min(l2, 1 - l2) * Math.max(-1, Math.min(k(n) - 3, 9 - k(n), 1))));
   return [iconMatch, [f(0), f(8), f(4)]];

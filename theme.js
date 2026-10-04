@@ -19,8 +19,9 @@ let customColours = HEADROOM_CUSTOM_DEFAULT.slice();
 const hexRgb = (h) => { const m = /^#?([0-9a-f]{6})$/i.exec(h || ''); if (!m) return null; const n = parseInt(m[1], 16); return [n >> 16, (n >> 8) & 255, n & 255]; };
 const validColours = (c) => (Array.isArray(c) && c.length === 2 && hexRgb(c[0]) && hexRgb(c[1]) ? [c[0], c[1]] : null);
 // The Match theme: one colour of the user's own; the second is worked out
-// from it (turned 35 degrees round the colour wheel and a little deeper), so
-// the pair always goes together. Keep this in step with background.js.
+// from it (turned 75 degrees round the colour wheel, about as far as Aurora
+// does, at the same lightness), so the pair always goes together. Keep this in
+// step with background.js.
 const HEADROOM_MATCH_DEFAULT = '#ff8fc0';
 let matchColour = HEADROOM_MATCH_DEFAULT;
 const matchPair = (hex) => {
@@ -28,9 +29,9 @@ const matchPair = (hex) => {
   const hi = Math.max(r, g, b), lo = Math.min(r, g, b), l = (hi + lo) / 2, d = hi - lo;
   let h = 0;
   if (d) h = hi === r ? ((g - b) / d) % 6 : hi === g ? (b - r) / d + 2 : (r - g) / d + 4;
-  h = (h * 60 + 35 + 360) % 360;
+  h = (h * 60 + 75 + 360) % 360;
   const s = d ? d / (1 - Math.abs(2 * l - 1)) : 0;
-  const l2 = Math.max(0, l - 0.06);
+  const l2 = l;
   const k = (n) => (n + h / 30) % 12;
   const f = (n) => Math.round(255 * (l2 - s * Math.min(l2, 1 - l2) * Math.max(-1, Math.min(k(n) - 3, 9 - k(n), 1))));
   return [hexRgb(hex) || hexRgb(HEADROOM_MATCH_DEFAULT), [f(0), f(8), f(4)]];
