@@ -67,6 +67,7 @@
       ],
       "js": [
         "shader.js",
+        "interp.js",
         "upnet.js",
         "model.js",
         "diag.js",

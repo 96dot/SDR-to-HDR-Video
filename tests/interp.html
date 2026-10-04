@@ -1,0 +1,22 @@
+<!doctype html>
+<meta charset="utf-8">
+<title>Headroom HDR: interpolation test page</title>
+<!-- Loads the extension's own shader.js and interp.js into a plain page, so that a headless browser can run them (see interp.test.mjs). -->
+<script src="../shader.js"></script>
+<script src="../interp.js"></script>
+<script>
+async function setup() {
+  const adapter = await navigator.gpu.requestAdapter();
+  const device = await adapter.requestDevice();
+  const make = (code, format) => {
+    const module = device.createShaderModule({ code });
+    return device.createRenderPipelineAsync({ layout: 'auto', vertex: { module, entryPoint: 'vsFull' }, fragment: { module, entryPoint: 'fs', targets: [{ format }] }, primitive: { topology: 'triangle-strip' } });
+  };
+  const [down1, down] = await Promise.all([make(SDR2HDR_DOWN1, 'rgba16float'), make(SDR2HDR_DOWN, 'rgba16float')]);
+  const gpu = { device, sampler: device.createSampler({ magFilter: 'linear', minFilter: 'linear' }), down1, down };
+  const pipes = await sdr2hdrInterpPipelines(device);
+  return { gpu, pipes };
+}
+window.ready = setup().then((s) => { window.S = s; return true; });
+window.runSelfTest = async (mx, my, t) => sdr2hdrInterpSelfTest(S.gpu, S.pipes, mx, my, t);
+</script>

@@ -62,7 +62,7 @@
   .controls-card #calibrate, .controls-card #modelBtn { flex: none; width: 72px; height: 26px; padding: 4px 7px; font-size: 12px; }
   .controls-card #method { width: 101px; }
   .controls-card #splitLeft, .controls-card #splitRight { width: 86px; padding-inline: 6px; }
-  .controls-card #perf, .controls-card #upscale { width: 179px; }
+  .controls-card #perf, .controls-card #upscale, .controls-card #interp { width: 179px; }
 
   /* Settings (the cog). */
   .set { display: flex; align-items: center; justify-content: space-between; gap: 10px; min-height: 40px; margin: 0; cursor: pointer; }
@@ -181,6 +181,12 @@
             <option value="best">Best (FSRCNNX)</option>
             <option value="fast">Fast</option>
             <option value="off">Off</option>
+          </select>
+      </label>
+      <label class="row plain" for="interp" title="For video with fewer frames than your screen has refreshes (30, 25 or 24 frames a second on a 60 Hz screen): the pictures between two frames are made up from the motion, so movement looks smoother. The picture then runs one video frame (about 33 ms at 30 fps) behind the sound. Fast action can show smearing, and a cut in the video falls back to the plain frames. Off by default. It only works while Every refresh is on."><span>Smooth motion</span>
+          <select id="interp">
+            <option value="off">Off</option>
+            <option value="on">On</option>
           </select>
       </label>
       <label class="row" title="The small HDR badge in the corner of converted videos"><span>Badge on the video</span><input type="checkbox" class="sw" id="badge"></label>
