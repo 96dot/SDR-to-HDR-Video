@@ -1,6 +1,6 @@
 <!doctype html><meta charset="utf-8"><title>Headroom HDR: shader tuning page</title>
 <!-- Replays the smooth-motion shaders (interp.js) on real saved frames (Alt+Shift+C) with variations of the picture-mixing shader, and scores each against the true frame (see tune.mjs). -->
-<script src="../shader.js"></script><script src="../interp.js"></script><script src="../capture.js"></script>
+<script src="../shader.js"></script><script src="../interp.js"></script><script src="../capture.js"></script><!-- only for sdr2hdrRowBytes -->
 <script>
 async function setup() {
   const adapter = await navigator.gpu.requestAdapter();
@@ -41,7 +41,7 @@ window.addTriple = async (name, p1, pt, p3) => {
 };
 const err = (x, y) => { let s = 0, n = 0; for (let j = 0; j < H; j++) for (let i = 0; i < W; i++) { const a = x.a[j * x.stride + i], b = y.a[j * y.stride + i]; for (let c = 0; c < 3; c++) { s += Math.abs(((a >> (10 * c)) & 1023) - ((b >> (10 * c)) & 1023)); n++; } } return s / n / 4; };
 // A variant: [[from, to], ...] applied to the mix shader. Returns the error per triple.
-window.runVariant = async (subs, dbg = 0) => {
+window.runVariant = async (subs) => {
   const { gpu, pipes, make } = S; const { device } = gpu;
   let code = SDR2HDR_MIX;
   for (const [a, b] of subs) { if (!code.includes(a)) throw new Error('not found: ' + a); code = code.split(a).join(b); }
@@ -49,7 +49,7 @@ window.runVariant = async (subs, dbg = 0) => {
   const out = [];
   for (const s of sets) {
     s.motion.pipes = { ...pipes, mix }; s.motion.dropGroups();
-    const e = device.createCommandEncoder(); s.motion.mix(e, s.A, s.B, 0.5, s.M, dbg); device.queue.submit([e.finish()]);
+    const e = device.createCommandEncoder(); s.motion.mix(e, s.A, s.B, 0.5, s.M, 0); device.queue.submit([e.finish()]);
     const r = await readTex(s.M.tex);
     out.push({ name: s.name, made: err(r, s.truth), plain: err(s.plain, s.truth) });
   }

@@ -20,11 +20,13 @@ All notable changes to Headroom HDR (called SDR to HDR Video before 0.11). Versi
 - The fix is a hand-picked rule on 16 pairs from one video (WWE entrance footage, the same arena); other footage may want different numbers. The tool is there to check.
 - Mean error says little about swirls (a blur scores well); the pictures had to be looked at too. Some places still look soft, and one pair (the second of the glitch moment) is still about as far from the truth as the plain frame, mostly from fast waving hands.
 - The share that falls back (the report's number) does not count these places, since they are not the plain frame.
+- Two variations the logic review suggested were scored on the real pairs and left out: letting the existing overall-motion check also gate the new rule (11.09 against 10.72; the glitch pair got worse, 8 to 13) and ignoring it near the picture's edge (10.99). The risk they were meant for stays: a thing moving its own way with grain or an exposure change can have part of its edge pulled to the overall motion (a faint ghost at its edge); the made-up busy test picture was unchanged (5.74, 5.46, 2.44% against 5.83, 5.57, 2.31%).
+- The Alt+Shift+I view is now called "fallback in red, doubt in blue".
 
 ### Tested, and not
 
 - Checked here: the 16 real pairs (scores above, and the pictures before and after for the glitch moment and for the walk-in with the truss); every synthetic test (the busy picture with moving objects: its error 5.74, 5.46, 2.44% against 5.83, 5.57, 2.31% before; the posts moving twice as far 1.51 against 1.68%; cuts as before; the self-check).
-- Not checked: how it looks in motion, on your screen and in HDR, which is the only real test; other footage; the cost on your card (it adds a few reads of the two pictures per pixel in the mixing pass, which was well under a millisecond before).
+- Not checked: how it looks in motion, on your screen and in HDR, which is the only real test; other footage; the cost on your card (it adds one 1-texel read and a little arithmetic per pixel in the mixing pass, which was well under a millisecond before).
 
 ## 1.3.7 - 2026-10-04
 

@@ -388,7 +388,8 @@
   }
   // The view for judging it, switched with Alt+Shift+I while Stats is on:
   // 0 the picture, 1 red where the nearer frame was used instead of a made-up
-  // one, 2 the motion that was found (see SDR2HDR_MIX).
+  // one and blue where the overall motion was used for a doubtful match, 2 the
+  // motion that was found (see SDR2HDR_MIX).
   let interpView = 0;
   // Saving frames (Alt+Shift+C, see saveStart): how many, the widest picture
   // kept (wider ones are made smaller), and the biggest frame read back.
@@ -402,7 +403,7 @@
   const REC_LOG = REC_KEEP * 4;
   const REC_MAX_W = 800;
   const REC_MINUTES = 10;
-  const INTERP_VIEWS = ['normal', 'fallback in red', 'the motion found'];
+  const INTERP_VIEWS = ['normal', 'fallback in red, doubt in blue', 'the motion found'];
 
   // True if the video is already HDR (PQ / HLG), in which case we leave it alone.
   // Looking means grabbing a frame, so the answer is remembered for a few

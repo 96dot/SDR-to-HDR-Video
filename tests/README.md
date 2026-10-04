@@ -15,6 +15,6 @@ Checks that run in headless Chromium or in plain Node. They need no extension in
 
 The recorder (Alt+Shift+R) and its shrink pass are not covered by an automated test: they were run end to end in headless Chromium by hand (a real key press, the zip checked), and need a screen that refreshes fast enough for Smooth motion to turn on, which the software GPU does not.
 
-`tune.mjs` is a tool too: `node tests/tune.mjs sets.json variants.json` replays the picture-mixing shader with variations on real frames saved with Alt+Shift+C, and scores each against the true frame (it makes the picture between frames 1 and 3 and compares it with frame 2, against the plain frame). It serves `tests/tune.html`. See its header.
+`tune.mjs` is a tool too: `node tests/tune.mjs sets.json variants.json` replays the picture-mixing shader with variations on real frames saved with Alt+Shift+C, and scores each against the true frame (it makes the picture between frames 1 and 3 and compares it with frame 2, against the plain frame). It serves `tests/tune.html`. See its header for the two JSON files and the options. Only run it on frames you saved yourself (the browser is started without its sandbox).
 
 These do not replace trying the extension on real video: how smooth playback is and how the picture looks can only be judged on a real display.

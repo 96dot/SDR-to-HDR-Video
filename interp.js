@@ -228,7 +228,8 @@ fn fs(in: VOut) -> @location(0) vec4f {
 `;
 
 // The picture between two frames, for t from 0 (A) to 1 (B). dbg: 0 = the
-// picture; 1 = where the nearer frame was used instead (red); 2 = the
+// picture; 1 = where the nearer frame was used instead (red) and where the
+// overall motion was used for a doubtful match (blue); 2 = the
 // motion that was found (colour for direction, strength for how far).
 const SDR2HDR_MIXLIB = SDR2HDR_COMMON + /* wgsl */ `
 struct P { t: f32, dbg: f32, p0: f32, p1: f32 };
@@ -303,6 +304,14 @@ fn mixAt(uv: vec2f) -> Made {
   // real footage). The overall motion is the better guess for such a place.
   // A thing really moving its own way also differs from the overall motion,
   // but then its two pictures agree. (x: how much of this, for the view.)
+  // away: how far the local motion is from the overall one, in pixels of the
+  // 480-wide level (20 or more counts as fully away). loc.diff * 4: a
+  // difference of 0.25 counts as the two pictures fully disagreeing. The
+  // product of the two is ramped in from 0.15 to 0.45. All hand-picked on 16
+  // real pairs (1.3.8, tests/tune.mjs); wider or narrower ramps and a
+  // fallback to the plain frame in place of the overall motion both scored
+  // worse. The same sum with wg also gating it, and with loc.both, were tried
+  // and scored worse too.
   let away = length(fl.xy - textureLoad(glob, vec2i(0, 0), 0).xy) * ${SDR2HDR_FLOW_LEVELS[0][0]}.0;
   let wx = smoothstep(0.15, 0.45, clamp(away / 20.0, 0.0, 1.0) * clamp(loc.diff * 4.0, 0.0, 1.0));
 
