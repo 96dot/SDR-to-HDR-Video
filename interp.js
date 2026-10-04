@@ -270,9 +270,10 @@ class Sdr2hdrMotion {
     this.valid = false;      // the other one holds the frame before it
   }
 
-  pass(enc, view, pipeline, bind) {
+  pass(enc, view, pipeline, bind, timing) {
     const rp = enc.beginRenderPass({
       colorAttachments: [{ view, clearValue: { r: 0, g: 0, b: 0, a: 1 }, loadOp: 'clear', storeOp: 'store' }],
+      ...(timing ? { timestampWrites: timing } : {}),
     });
     rp.setPipeline(pipeline);
     rp.setBindGroup(0, bind);
@@ -282,17 +283,22 @@ class Sdr2hdrMotion {
 
   // A new current frame. Builds its pyramid, and if there is a frame before
   // it, the flow from one to the other. Returns true if the flow was made.
-  advance(enc, sl) {
+  // tq: a query set of two timestamps (see Session.timer), to have the GPU
+  // time all of this itself: from the start of the first pass to the end of
+  // the last.
+  advance(enc, sl, tq = null) {
     const g = this.gpu;
     this.k = 1 - this.k;
     const pk = this.pyr[this.k];
-    this.pass(enc, pk[0].view, g.down1, sl.bgDown1);
-    this.pass(enc, pk[1].view, g.down, this.bgPyr[this.k][0]);
-    this.pass(enc, pk[2].view, g.down, this.bgPyr[this.k][1]);
+    const first = tq && { querySet: tq.set, beginningOfPassWriteIndex: 0 };
+    const last = tq && { querySet: tq.set, endOfPassWriteIndex: 1 };
     const flowed = this.valid;
+    this.pass(enc, pk[0].view, g.down1, sl.bgDown1, first);
+    this.pass(enc, pk[1].view, g.down, this.bgPyr[this.k][0]);
+    this.pass(enc, pk[2].view, g.down, this.bgPyr[this.k][1], flowed ? null : last);
     if (flowed) {
       for (let i = 0; i < this.flow.length; i++) this.pass(enc, this.flow[i].view, this.pipes.flow, this.bgFlow[this.k][i]);
-      this.pass(enc, this.cut.view, this.pipes.cut, this.bgCut);
+      this.pass(enc, this.cut.view, this.pipes.cut, this.bgCut, last);
     }
     this.valid = true;
     return flowed;

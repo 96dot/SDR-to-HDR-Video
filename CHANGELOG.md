@@ -2,6 +2,22 @@
 
 All notable changes to Headroom HDR (called SDR to HDR Video before 0.11). Versions follow the number in `manifest.json`.
 
+## 1.3.1 - 2026-10-04
+
+### Fixed
+
+- **Smooth motion shut itself off by mistake.** On a 4K 30 fps video on YouTube (Windows, Brave, 60 Hz) it turned on, then about six seconds later stopped with "working out the motion took 60 ms for a frame that lasts 33 ms: too slow for this GPU", every time. The safety check measured how long the page waited for the GPU to finish everything queued after each new frame. That includes the frame's copy, the drawing before it and the wait for the screen, so it said 36 to 60 ms of a job that takes the GPU a few. It now goes by the GPU's own timestamps: from the start of the first pass of the motion work to the end of the last, one frame in four, over twelve measurements, and it stops only if that is half a frame's time or more. Where a GPU cannot time itself, the old measure is the only thing to go by, and counts only at one and a half frames.
+- The report's Smooth motion section gives both figures (the GPU's own and the page's wait), so the two can be compared on a real card.
+
+### Found and not changed
+
+- With Smooth motion on, the drawing happens on every refresh, so a 4K picture costs the GPU twice what it did at 30 frames a second. On the report that prompted this the draw alone was about 8 ms at 4K (with the picture drawn at full 4K), which at 60 a second is a big share of the GPU; Auto quality may lower the size when it is too much.
+
+### Tested, and not
+
+- Checked here: the GPU timing in headless Chromium on a software GPU (it reports the motion's time from the GPU's own clock, and the give-up still happens, with the new wording, when the motion really is too slow: about 700 ms there against a 200 ms frame); the timing logic and shader tests as before.
+- Not checked: on your card. That is what to look at in the next report: the Smooth motion lines should now show a small GPU time and the feature should stay on.
+
 ## 1.3.0 - 2026-10-04
 
 ### Added

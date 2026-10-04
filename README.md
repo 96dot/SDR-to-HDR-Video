@@ -179,7 +179,7 @@ With Smooth motion on, a video with fewer frames than the screen has refreshes g
 
 The picture then goes through the rest of drawing as if it were a video frame: analysis, upscaling, the conversion to HDR. A steady clock of its own (not the arrival of frames, which land on the grid of refreshes) says when each pair begins, so the video moves the same amount every refresh. At 30 frames a second on a 60 Hz screen the first refresh of each pair is the real frame and the second is the picture halfway.
 
-The motion is worked out once per video frame; per refresh there is one mixing pass and the usual drawing. Before it is used on a GPU, a made-up pair of frames with a known motion goes through the same code and the result is checked; if it is wrong, smooth motion is not offered there. If working out the motion takes the GPU most of a frame's time it stops by itself. Turning it off and on in the popup tries again.
+The motion is worked out once per video frame; per refresh there is one mixing pass and the usual drawing. Before it is used on a GPU, a made-up pair of frames with a known motion goes through the same code and the result is checked; if it is wrong, smooth motion is not offered there. If working out the motion takes the GPU half of a frame's time or more (timed by the GPU itself) it stops by itself. Turning it off and on in the popup tries again.
 
 ### Performance
 

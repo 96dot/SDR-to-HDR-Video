@@ -746,7 +746,7 @@
       this.ipWhy = '';          // why not, for the report
       this.sched = new Sdr2hdrSchedule();   // when to show what (see interp.js)
       this.ipShown = null;      // the last picture put on screen while interpolating: { sl }
-      this.ipStat = { frames: 0, made: 0, late: 0, resyncs: 0, jumps: 0, skipped: 0, since: 0, work: [] };
+      this.ipStat = { frames: 0, made: 0, late: 0, resyncs: 0, jumps: 0, skipped: 0, since: 0, work: [], gpu: [] };
       this.motion = null;       // the flow between the two frames (see interp.js)
       this.midSlot = null;      // the texture the made-up pictures are drawn into
       this.seenTs = null;       // timestamp of the video frame last copied
@@ -2121,7 +2121,7 @@
         this.ipOn = on;
         this.ipWhy = why;
         if (changed) {
-          if (on) this.ipStat = { frames: 0, made: 0, late: 0, resyncs: 0, jumps: 0, skipped: 0, since: performance.now(), work: [] };
+          if (on) this.ipStat = { frames: 0, made: 0, late: 0, resyncs: 0, jumps: 0, skipped: 0, since: performance.now(), work: [], gpu: [] };
           note(on
             ? `${nameOf(this.video)}: making up the pictures between frames (${this.srcFps.toFixed(1)} frames a second on a ${(1000 / this.tickMs).toFixed(0)} Hz screen)`
             : `${nameOf(this.video)}: not making up pictures between frames${why === 'switched off' ? '' : `, because ${why}`}`);
@@ -2160,18 +2160,52 @@
 
     // The motion between this.cur and the frame before it, for a new frame.
     // Returns true if there is a motion to go by.
+    //
+    // How long it takes is measured two ways. The GPU times one frame in four
+    // itself (st.gpu), from the start of the first pass to the end of the
+    // last: that is the cost of the motion, and what the give-up check goes
+    // by. The other is how long the page waited for the GPU to be done with
+    // everything queued so far (st.work): it includes the frame's copy and
+    // the drawing before it, and the wait for the screen, so it says nothing
+    // about the motion on its own (it said 36 to 60 ms on a card whose
+    // motion takes a few: 1.3.0 gave up on that, wrongly). It is kept for
+    // the report, and used only where the GPU cannot time itself.
     interpAdvance(sl) {
       const { device } = this.gpu;
+      const st = this.ipStat;
       if (!this.motion) this.motion = new Sdr2hdrMotion(this.gpu, this.gpu.interp.pipes);
+      const tq = this.gpu.canTime && st.frames % 4 === 0 ? this.timer() : null;
       const enc = device.createCommandEncoder();
-      const flowed = this.motion.advance(enc, sl);
+      const flowed = this.motion.advance(enc, sl, tq);
+      let readback = null;
+      if (tq) {
+        readback = tq.free.pop() || device.createBuffer({ size: 16, usage: GPUBufferUsage.MAP_READ | GPUBufferUsage.COPY_DST });
+        enc.resolveQuerySet(tq.set, 0, 2, tq.resolve, 0);
+        enc.copyBufferToBuffer(tq.resolve, 0, readback, 0, 16);
+      }
       const at = performance.now();
       device.queue.submit([enc.finish()]);
       device.queue.onSubmittedWorkDone().then(() => {
-        const w = this.ipStat.work;
+        const w = st.work;
         w.push(performance.now() - at);
         if (w.length > 64) w.shift();
       }, () => {});
+      if (readback) {
+        tq.out++;
+        readback.mapAsync(GPUMapMode.READ).then(() => {
+          const ns = new BigInt64Array(readback.getMappedRange().slice(0));
+          readback.unmap();
+          tq.out--;
+          if (this.dead) { readback.destroy(); return; }
+          tq.free.push(readback);
+          const ms = Number(ns[1] - ns[0]) / 1e6;
+          // Only a frame with a motion to work out says anything about it.
+          if (flowed && ms >= 0 && ms < 2000) {
+            st.gpu.push(ms);
+            if (st.gpu.length > 32) st.gpu.shift();
+          }
+        }, () => { tq.out--; try { readback.destroy(); } catch (e) {} });
+      }
       return flowed;
     }
 
@@ -2208,11 +2242,17 @@
         this.ipShown = null;
         promoted = true;
         st.frames++;
-        // If working out the motion takes the GPU most of a frame's time,
-        // it is not going to keep up: say so and stop.
+        // If working out the motion takes the GPU half a frame's time, it is
+        // not going to keep up: say so and stop. By the GPU's own timing
+        // where it has one (over twelve measurements, so one slow start does
+        // not decide); where it has none, by the page's wait for it, which
+        // is far less exact and so only counts at one and a half frames.
+        const g = [...st.gpu].sort((x, y) => x - y);
         const w = [...st.work].sort((x, y) => x - y);
-        if (w.length >= 8 && w[w.length >> 1] > frameMs * 0.8) {
-          this.interpGiveUp(`working out the motion took ${Math.round(w[w.length >> 1])} ms for a frame that lasts ${Math.round(frameMs)} ms: too slow for this GPU`);
+        if (g.length >= 12 && g[g.length >> 1] > frameMs * 0.5) {
+          this.interpGiveUp(`working out the motion took the GPU ${g[g.length >> 1].toFixed(1)} ms for a frame that lasts ${Math.round(frameMs)} ms (timed on the GPU itself): too slow for this GPU`);
+        } else if (!this.gpu.canTime && w.length >= 16 && w[w.length >> 1] > frameMs * 1.5) {
+          this.interpGiveUp(`the page waited ${Math.round(w[w.length >> 1])} ms for the GPU after each new frame, for a frame that lasts ${Math.round(frameMs)} ms (this GPU cannot time itself, so that is all there is to go by): too slow for this GPU`);
         }
       }
       const cur = this.cur;
@@ -2256,6 +2296,7 @@
     interpGiveUp(why) {
       this.ipFailed = why;
       this.ipStat.work.length = 0;
+      this.ipStat.gpu.length = 0;
       log(`smooth motion stopped on ${nameOf(this.video)}: ${why}`);
       this.interpStop();
     }
@@ -2273,11 +2314,13 @@
       }
       const secs = Math.max(0.001, (performance.now() - st.since) / 1000);
       const w = [...st.work].sort((a, b) => a - b);
+      const g = [...st.gpu].sort((a, b) => a - b);
+      const mid = (a) => (a.length ? a[a.length >> 1] : NaN);
       const n = (x, d = 1) => (Number.isFinite(x) ? x.toFixed(d) : '-');
       return [
         `Smooth motion: on. ${this.srcFps.toFixed(1)} frames a second on a ${n(1000 / this.tickMs, 0)} Hz screen; the picture runs one video frame (${n(1000 / this.srcFps, 0)} ms) behind the sound.${check}`,
         `  Since it came on (${n(secs, 0)} s): ${st.frames} video frames, ${st.made} pictures made up, ${st.late} frames came more than 20 ms late (the last picture was held), ${st.skipped} were skipped to catch up, ${st.resyncs} times the clock was started again (a frame too far behind), ${st.jumps} gaps (a seek or a stall) not made up across.`,
-        `  Working out the motion for a new frame took the GPU ${n(w.length ? w[w.length >> 1] : NaN)} ms typically and ${n(w.length ? w[w.length - 1] : NaN)} ms at most (as seen from the page, so it includes waiting its turn). The view for judging it (Alt+Shift+I with Stats on): ${INTERP_VIEWS[interpView]}.`,
+        `  Working out the motion for a new frame: ${g.length ? `${n(mid(g))} ms typically and ${n(g[g.length - 1])} ms at most on the GPU, timed by the GPU itself (it gives up at half a frame)` : 'not timed on the GPU (this GPU cannot be, or too few measured yet)'}; as the page saw it, waiting for everything queued before it too, ${n(mid(w))} ms typically and ${n(w.length ? w[w.length - 1] : NaN)} ms at most. The view for judging it (Alt+Shift+I with Stats on): ${INTERP_VIEWS[interpView]}.`,
       ];
     }
 
