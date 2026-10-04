@@ -746,7 +746,7 @@
       this.ipWhy = '';          // why not, for the report
       this.sched = new Sdr2hdrSchedule();   // when to show what (see interp.js)
       this.ipShown = null;      // the last picture put on screen while interpolating: { sl }
-      this.ipStat = { frames: 0, made: 0, late: 0, resyncs: 0, jumps: 0, skipped: 0, since: 0, work: [], gpu: [], miss: [], fast: [], cuts: 0, partial: 0, measured: 0 };
+      this.ipStat = { frames: 0, made: 0, late: 0, resyncs: 0, jumps: 0, skipped: 0, since: 0, work: [], gpu: [], miss: [], fast: [], fell: [], cuts: 0, partial: 0, measured: 0 };
       this.motion = null;       // the flow between the two frames (see interp.js)
       this.midSlot = null;      // the texture the made-up pictures are drawn into
       this.ipSeen = [];         // spare buffers for reading back what the motion looked like (see interpAdvance)
@@ -2122,7 +2122,7 @@
         this.ipOn = on;
         this.ipWhy = why;
         if (changed) {
-          if (on) this.ipStat = { frames: 0, made: 0, late: 0, resyncs: 0, jumps: 0, skipped: 0, since: performance.now(), work: [], gpu: [], miss: [], fast: [], cuts: 0, partial: 0, measured: 0 };
+          if (on) this.ipStat = { frames: 0, made: 0, late: 0, resyncs: 0, jumps: 0, skipped: 0, since: performance.now(), work: [], gpu: [], miss: [], fast: [], fell: [], cuts: 0, partial: 0, measured: 0 };
           note(on
             ? `${nameOf(this.video)}: making up the pictures between frames (${this.srcFps.toFixed(1)} frames a second on a ${(1000 / this.tickMs).toFixed(0)} Hz screen)`
             : `${nameOf(this.video)}: not making up pictures between frames${why === 'switched off' ? '' : `, because ${why}`}`);
@@ -2233,6 +2233,33 @@
       return flowed;
     }
 
+    // How much of the picture falls back to the plain frame for this pair, at
+    // the halfway picture, read from the GPU (one pair in four) for the report.
+    interpMeasure(a, b) {
+      const { device } = this.gpu;
+      const st = this.ipStat;
+      try {
+        const enc = device.createCommandEncoder();
+        this.motion.stat(enc, a, b);
+        const buf = this.ipSeen.pop() || device.createBuffer({ size: 256, usage: GPUBufferUsage.MAP_READ | GPUBufferUsage.COPY_DST });
+        enc.copyTextureToBuffer({ texture: this.motion.wstat.tex }, { buffer: buf, bytesPerRow: 256 }, [1, 1]);
+        device.queue.submit([enc.finish()]);
+        buf.mapAsync(GPUMapMode.READ).then(() => {
+          const h = new Uint16Array(buf.getMappedRange().slice(0, 8));
+          buf.unmap();
+          if (this.dead) { buf.destroy(); return; }
+          this.ipSeen.push(buf);
+          const v = sdr2hdrHalf(h[0]);
+          if (Number.isFinite(v)) {
+            st.fell.push(v);
+            if (st.fell.length > 64) st.fell.shift();
+          }
+        }, () => { try { buf.destroy(); } catch (e) {} });
+      } catch (e) {
+        log(`smooth motion: could not measure the fallback on ${nameOf(this.video)}: ${e.name}: ${e.message}`);
+      }
+    }
+
     // Once per refresh instead of presentNext, while interpolating.
     presentInterp(now) {
       const began = performance.now();
@@ -2263,6 +2290,7 @@
         if (a.resync) st.resyncs++;
         this.ipPrev = a.pair ? prev : null;
         this.cur = sl;
+        if (a.pair && st.frames % 4 === 0) this.interpMeasure(prev, sl);
         this.ipShown = null;
         promoted = true;
         st.frames++;
@@ -2341,12 +2369,14 @@
       const g = [...st.gpu].sort((a, b) => a - b);
       const ms = [...st.miss].sort((a, b) => a - b);
       const fa = [...st.fast].sort((a, b) => a - b);
+      const fl = [...st.fell].sort((a, b) => a - b);
       const mid = (a) => (a.length ? a[a.length >> 1] : NaN);
       const n = (x, d = 1) => (Number.isFinite(x) ? x.toFixed(d) : '-');
       return [
         `Smooth motion: on. ${this.srcFps.toFixed(1)} frames a second on a ${n(1000 / this.tickMs, 0)} Hz screen; the picture runs one video frame (${n(1000 / this.srcFps, 0)} ms) behind the sound.${check}`,
         `  Since it came on (${n(secs, 0)} s): ${st.frames} video frames, ${st.made} pictures made up, ${st.late} frames came more than 20 ms late (the last picture was held), ${st.skipped} were skipped to catch up, ${st.resyncs} times the clock was started again (a frame too far behind), ${st.jumps} gaps (a seek or a stall) not made up across.`,
         `  What the motion looked like (read from the GPU for one frame in four; ${st.measured} so far): ${st.miss.length ? `the match was off by ${n(mid(ms), 3)} typically and ${n(ms[Math.max(0, Math.ceil(ms.length * 0.95) - 1)], 3)} in the worst twentieth (0.07 and above is partly taken for a cut, 0.10 and above wholly); ${st.cuts} of ${st.measured} frames were taken for a cut and ${st.partial} partly; the fastest thing moved ${n(mid(fa), 0)} px typically and ${n(fa[fa.length - 1], 0)} px at most on a grid 480 wide (it can follow about 57)` : 'nothing read back yet'}.`,
+        `  How much of the picture fell back to the plain frame, at the halfway picture (red in the Alt+Shift+I view; ${fl.length} measured): ${fl.length ? `${n(mid(fl) * 100, 1)}% typically, ${n(fl[Math.max(0, Math.ceil(fl.length * 0.95) - 1)] * 100, 1)}% in the worst twentieth of the pairs. The more of it, the more the picture looks like the video's own frame rate.` : 'nothing measured yet'}`,
         `  Working out the motion for a new frame: ${g.length ? `${n(mid(g))} ms typically and ${n(g[g.length - 1])} ms at most on the GPU, timed by the GPU itself (it gives up at half a frame)` : 'not timed on the GPU (this GPU cannot be, or too few measured yet)'}; as the page saw it, waiting for everything queued before it too, ${n(mid(w))} ms typically and ${n(w.length ? w[w.length - 1] : NaN)} ms at most. The view for judging it (Alt+Shift+I with Stats on): ${INTERP_VIEWS[interpView]}.`,
       ];
     }

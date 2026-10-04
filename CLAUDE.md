@@ -48,7 +48,7 @@ Fix the findings that belong to the change; list the small unrelated ones in the
 
 ## Smooth motion (frame interpolation, 1.3.0)
 
-Off by default. It changes how motion looks (a made-up picture on the refreshes between frames) and runs the picture one video frame behind the sound; do not turn it on by default or change its look without asking. The cut and fallback thresholds in `interp.js` were set on made-up frames and are untested on real footage. Its self-check gates it per GPU, and it stops itself if it is too slow. Diagnostics: the report's Smooth motion section, and Alt+Shift+I (with Stats on) for the fallback and motion views.
+Off by default. It changes how motion looks (a made-up picture on the refreshes between frames) and runs the picture one video frame behind the sound; do not turn it on by default or change its look without asking. The cut and fallback thresholds in `interp.js` were set on made-up frames (including a busy one with moving objects, grain and an exposure change) and are only checked against real footage through the report's read-outs (the match, the fastest motion, the share that falls back). Its self-check gates it per GPU, and it stops itself if it is too slow. Diagnostics: the report's Smooth motion section, and Alt+Shift+I (with Stats on) for the fallback and motion views.
 
 ## Not in this repository
 

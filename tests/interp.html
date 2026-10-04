@@ -18,5 +18,14 @@ async function setup() {
   return { gpu, pipes };
 }
 window.ready = setup().then((s) => { window.S = s; return true; });
+window.runSelfTestMap = async (mx, my, t, pattern, noise) => { const r = await sdr2hdrInterpSelfTest(S.gpu, S.pipes, mx, my, t, pattern, noise, 3); return r.map.map((row) => row.map((v) => ' .:-=+*#%@'[Math.min(9, Math.round(v * 9))]).join('')); };
+window.runSelfTestRaw = async (mx, my, t, pattern, noise) => {
+  // the flow found at the middle of the two moving things of the busy scene (pattern 4), against the truth
+  const r = await sdr2hdrInterpSelfTest(S.gpu, S.pipes, mx, my, t, pattern, noise, 0);
+  const c1 = [0.30 + mx * 2.5, 0.35 + my * 2.5], c2 = [0.70 - mx * 1.5, 0.65 - my * 1.5 + mx * 0.8];
+  const f1 = r.flowAtUv(...c1), f2 = r.flowAtUv(...c2), fb = r.flowAtUv(0.5, 0.9);
+  const tru = (k, ox, oy) => [-(k * mx + ox) * 480, -(k * my + oy) * 270].map((v) => +v.toFixed(1));
+  return { object1: { found: f1.slice(0, 2).map((v) => +v.toFixed(1)), cost: +f1[2].toFixed(3), true: tru(2.5, 0, 0) }, object2: { found: f2.slice(0, 2).map((v) => +v.toFixed(1)), cost: +f2[2].toFixed(3), true: [+(1.5 * mx * 480).toFixed(1), +((1.5 * my - 0.8 * mx) * 270).toFixed(1)] }, background: { found: fb.slice(0, 2).map((v) => +v.toFixed(1)), cost: +fb[2].toFixed(3), true: tru(1, 0, 0) } };
+};
 window.runSelfTest = async (mx, my, t, pattern, noise, dbg) => sdr2hdrInterpSelfTest(S.gpu, S.pipes, mx, my, t, pattern, noise, dbg);
 </script>

@@ -62,6 +62,29 @@ for (const [name, px, py, pattern] of [['pan across a scene', 30, 0, 1], ['pan t
   check(`overall motion: ${name}`, err < 2.5, `found ${r.globalFlow[0].toFixed(1)}, ${r.globalFlow[1].toFixed(1)} px; true ${want[0].toFixed(1)}, ${want[1].toFixed(1)}`);
 }
 
+// A busy picture, as real video is: a pan across fine detail, two things
+// moving their own ways (one at two and a half times the pan), grain that is
+// new every frame, and a slight change of exposure between the frames. What
+// moves must be made up, not shown as the plain frame: with the 1.3.2 rule,
+// which called the match in doubt wherever the two guesses differed point by
+// point, 13% of this picture fell back (the inside of everything that moved),
+// and on footage like it most of what moved looked like the video's own frame
+// rate. Now only the outlines of the moving things (what they cover and
+// uncover) should.
+for (const [name, px, py] of [['pan 20 px', 20, 0], ['pan 20 px and 6 px down', 20, 6], ['pan 8 px', 8, 3]]) {
+  const r = await page.evaluate(([a, b]) => window.runSelfTest(a / 512, b / 288, 0.5, 4, 0.04), [px, py]);
+  const g = await page.evaluate(([a, b]) => window.runSelfTest(a / 512, b / 288, 0.5, 4, 0.04, 3), [px, py]);
+  check(`busy picture: ${name}: what moves is made up, not shown as the plain frame`, g.fellBack < 0.10 && r.midErr < 0.07 && g.fellStat < 0.08,
+    `${(g.fellBack * 100).toFixed(1)}% fell back (the report's measure of the whole picture: ${(g.fellStat * 100).toFixed(1)}%), picture error ${(r.midErr * 100).toFixed(2)}%`);
+}
+{
+  // the two moving things' own motion is found, not the pan's
+  const o = await page.evaluate(() => window.runSelfTestRaw(20 / 512, 0, 0.5, 4, 0.04));
+  const near = (a, b, e) => Math.hypot(a[0] - b[0], a[1] - b[1]) < e;
+  check('busy picture: the two moving things have their own motion found', near(o.object1.found, o.object1.true, 2.5) && near(o.object2.found, o.object2.true, 2.5),
+    `first ${o.object1.found} (true ${o.object1.true}), second ${o.object2.found} (true ${o.object2.true}), background ${o.background.found} (true ${o.background.true})`);
+}
+
 // A cut: the second frame is the first moved far beyond what can be matched.
 // The picture between them should be one frame or the other as it is, not a
 // blend of the two.

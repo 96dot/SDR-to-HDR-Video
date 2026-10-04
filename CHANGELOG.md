@@ -2,6 +2,31 @@
 
 All notable changes to Headroom HDR (called SDR to HDR Video before 0.11). Versions follow the number in `manifest.json`.
 
+## 1.3.4 - 2026-10-04
+
+### Fixed
+
+- **Most of what moved looked like the video's own frame rate (30 fps) with Smooth motion on.** (Reported on a 1080p 30 fps video whose frames matched noticeably worse than the 4K one before: 0.030 typically against 0.002.) The rule that decides where the made-up picture cannot be trusted and the plain frame is shown instead had a term for how much the two pictures it makes differ, point by point. Fine detail, grain and a slight change of exposure make that large even where the motion found is exactly right, so the inside of everything that moved fell back to the plain frame, which at the halfway picture is the next frame unmoved: the picture steps at 30 fps wherever there is motion. On a made-up busy picture (a pan across detail, two things moving their own ways, grain, a 5% change of exposure) 13% of the picture fell back, all of it inside the things that moved, though their motion was found within half a pixel.
+  - That term is gone. A place is now in doubt only when the match at that place is well below what is usual for the picture as a whole (about two to three and a half times the picture's usual mismatch, and above a floor of 0.04 to 0.09), so footage that matches less well everywhere is not judged against a clean picture's standard. The usual mismatch is read from the finest level of the motion at every eighth texel each way.
+  - On the busy test picture the fallback now falls on the outlines of the moving things only, where something is being covered or uncovered and nothing can be right (about 4.7% of the picture; 8.4% of its middle).
+  - The test for the picture falling back where even the overall motion disagrees is kept but gentler (0.10 to 0.28, was 0.08 to 0.22); the cut test (0.07 to 0.10) is as it was.
+- Moving things on the busy test picture have their own motion found (first thing: -46.9 px found, -46.9 true; second: 27.7, -8.7 found, 28.1, -8.4 true), not the pan's.
+
+### Added
+
+- **The report now says how much of the picture fell back to the plain frame**, read from the GPU for one pair in four at the halfway picture: typically and in the worst twentieth. This is the figure that tells whether Smooth motion is making up the movement or leaving it at the video's own frame rate. It is the share of the whole picture (the part of it in the red of the Alt+Shift+I view).
+- Tests: the busy picture (what moves is made up; the things' own motion is found).
+
+### Found and not changed
+
+- The picture error on the busy test picture is 5.6 to 5.8% at a 20 px pan, against under 1% on the plainer pictures. It is mostly the fine detail of the things moving at two and a half times the pan, which the plain two-tap resampling blurs a little; a sharper resampling would help and costs more GPU time.
+- Where something is covered or uncovered, the plain frame is still shown, as it must be. At a fast move the band is as wide as the move.
+
+### Tested, and not
+
+- Checked here: all the shader tests (plain and busy pictures, the overall motion, cuts, edges, and the new busy-picture cases); the timing tests; the new read-out working in the extension in headless Chromium (on the software GPU's unrelated test video it read 8.8% typically, which says only that the path works).
+- Not checked: your video on your card. In your next report, look at the new line: if the share that falls back is a few per cent and the picture still looks like 30 fps, the cause is something else, and the report will say so.
+
 ## 1.3.3 - 2026-10-04
 
 ### Fixed
