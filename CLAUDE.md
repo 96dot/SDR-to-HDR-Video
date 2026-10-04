@@ -24,14 +24,14 @@ Free, open-source Chromium extension (Manifest V3, WebGPU) that converts SDR web
 
 A **major update** is any substantial engine work or new feature. Small fixes, theme or layout tweaks and doc corrections get the light checks (syntax check on every `.js`, a test of the specific change where one is possible, changelog and version).
 
-For a major update, before handing it over, do all of this, and tell the owner **once, when every check is done**, not after each part:
+For a major update, before handing it over, do all of this, and tell the owner **once, when every check is done**, not after each part. **`tests/CHECKS.md` is the full procedure, with paste-ready prompts for the three reviews, and `node tests/check-all.mjs --e2e` runs the automated half (syntax, lint, manifest paths, the hand-kept duplicates, every test, popup height, a key-press run in a browser).** The list here is the summary:
 
 1. **Three independent reviews** (use subagents, read-only) of the changed code and everything it touches, each reading the code in full:
    - security: DOM injection, message handlers and sender checks, page-forgeable actions, the unlock rules, storage and model-file validation, anything leaving the machine;
    - logic: control flow, races, resource leaks, load order and globals, settings written but not read, constants out of step, units;
    - readability and consistency: naming, dead code, hand-synced duplicates (`theme.js` against `background.js`, `popup.js` DEFAULTS against `content.js` DEFAULTS), docs and comments against the code.
 2. **Verify every finding yourself** against the code before reporting it. Drop what cannot be shown reachable. Say plainly which were false alarms.
-3. **Automated checks**: `node --check` on every `.js`; lint if available (`/opt/node-tools`); `node tests/schedule.test.mjs` and `node tests/interp.test.mjs` (see `tests/README.md`); every path in `manifest.json` exists; the duplicated palettes and colour maths are in step; popup height in both views.
+3. **Automated checks**: `node tests/check-all.mjs --e2e` (it does: `node --check` on every `.js`; lint if available (`/opt/node-tools`); every test in `tests/`, see `tests/README.md`; every path in `manifest.json` exists; the duplicated palettes and colour maths and the two DEFAULTS are in step; popup height in both views).
 4. **Run it** in headless Chromium where possible (a faked HDR display needs `--force-color-profile=hdr10`; keep the page's tab in front, or the browser throttles it to one frame a second; the software GPU is far too slow to play video in real time, so timing has to be tested apart from the GPU, as `tests/schedule.test.mjs` does). For a fix, reproduce the bug on the old code first, then show it gone on the new.
 5. **Report** in plain words: what was checked, what was found, what was fixed, what could not be tested, and exactly what the owner should try on their machine.
 

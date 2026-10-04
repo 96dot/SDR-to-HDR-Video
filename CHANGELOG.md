@@ -2,6 +2,25 @@
 
 All notable changes to Headroom HDR (called SDR to HDR Video before 0.11). Versions follow the number in `manifest.json`.
 
+## 1.3.9 - 2026-10-04
+
+Nothing in the extension changed; this is the checking kit.
+
+### Added
+
+- **`tests/check-all.mjs`**: one command (`node tests/check-all.mjs --e2e`, about a minute) for the automated half of the checks a major update needs: syntax of every script, lint, every file the manifest names, the changelog heading against the manifest version, `popup.js` and `content.js` DEFAULTS against each other, the theme palettes and the Match colour maths against each other (200 random colours), every test in `tests/`, the popup's height in the main view and the settings view with the Amber, Match and Custom themes (466, 567 and 594 px today, against a limit of 600), and, with `--e2e`, the extension run in headless Chromium: a real Alt+Shift+C saves four frames with the info and the report, a key press made by the page does not, and neither does it with Stats off.
+- **`tests/CHECKS.md`**: the whole procedure for future sessions: the script, the three read-only reviews with paste-ready prompts, verifying every finding, running it, scoring changes on real footage (`pairs.mjs`, `tune.mjs`, and why to look at the pictures), and what the report to Jones should hold. `CLAUDE.md` and `tests/README.md` point to it.
+
+### Found and not changed
+
+- The popup is measured with no HDR display, which is the tallest case (its status line takes two lines); with the HDR display faked it is 14 px shorter.
+- The e2e needs ffmpeg for a test video, and retries the key press because the tab can lose the keyboard focus.
+
+### Tested, and not
+
+- Checked here: the script passes (20 checks, 0 failed) on this repository; its numbers match the ones in `CLAUDE.md`; each check was seen to fail when something was broken on purpose (a changed default, a changed palette colour, a changed Match constant, a missing manifest file, a syntax error, a version without a changelog heading, a popup made 200 px taller, a misspelt function in the shader), and the file was put back each time.
+- Not checked: on Windows or macOS (the script was only run here), and with the lint warnings of a newer eslint.
+
 ## 1.3.8 - 2026-10-04
 
 ### Fixed

@@ -4,6 +4,7 @@ Checks that run in headless Chromium or in plain Node. They need no extension in
 
 | File | What it checks | How to run |
 |---|---|---|
+| `check-all.mjs` | **Everything automated in one go**, for a major update: syntax, lint, manifest paths, the settings and theme tables kept in step by hand, all the tests below, popup height, and (with `--e2e`) a key-press run in a browser. The procedure around it (the three reviews, real footage, the report) is `CHECKS.md`. | `node tests/check-all.mjs --e2e` |
 | `schedule.test.mjs` | When smooth motion shows which picture (`Sdr2hdrSchedule` in `interp.js`): a pretend screen at 60, 75, 120 and 144 Hz against 30, 25 and 24 fps video, with late frames, dropped frames, seeks and a changed playback speed. No GPU, no browser. | `node tests/schedule.test.mjs` |
 | `interp.test.mjs` | The GPU part of smooth motion (`interp.js`): the real shaders on a software GPU, with made-up frames whose motion is known. The flow found, the picture made at the halfway point, the cut fallback, and a pan across a scene (sky, horizon, ground, posts, with noise new each frame, including the sides of the picture and posts moving at twice the speed) are compared with the truth. | `node tests/interp.test.mjs` |
 | `capture.test.mjs` | The frame saver's file making (`capture.js`): the CRC, the zip (read back by Python's zipfile), and the 10-bit to 8-bit conversion. The PNG making and the download need a browser and are covered only by `pairs.test.mjs` and by running the extension. | `node tests/capture.test.mjs` (needs python3) |
