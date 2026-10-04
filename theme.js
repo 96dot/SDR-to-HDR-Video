@@ -1,7 +1,7 @@
 // The colour theme, chosen in the popup's settings. Put on <html> as early as
 // it can be, on every page of the extension, so the page doesn't flash in
 // another one first.
-const HEADROOM_THEMES = { amber: 'Amber', ocean: 'Ocean', rose: 'Rose', aurora: 'Aurora' };
+const HEADROOM_THEMES = { amber: 'Amber', ocean: 'Ocean', rose: 'Rose', aurora: 'Aurora', custom: 'Custom' };
 // These palettes and the pixel transform match background.js so the popup
 // and browser toolbar show the same themed glass icon.
 const HEADROOM_ICON_PALETTES = {
@@ -11,12 +11,53 @@ const HEADROOM_ICON_PALETTES = {
   aurora: [[168, 146, 238], [242, 154, 198]],
 };
 const themeName = (name) => Object.hasOwn(HEADROOM_THEMES, name) ? name : 'amber';
+
+// The Custom theme: two colours of the user's own, from which everything
+// else is worked out (glow, the light behind the glass, a dark page tinted
+// with the first, and whether text on the accent should be dark or light).
+const HEADROOM_CUSTOM_DEFAULT = ['#7cf0c0', '#4d7cff'];
+let customColours = HEADROOM_CUSTOM_DEFAULT.slice();
+const hexRgb = (h) => { const m = /^#?([0-9a-f]{6})$/i.exec(h || ''); if (!m) return null; const n = parseInt(m[1], 16); return [n >> 16, (n >> 8) & 255, n & 255]; };
+const validColours = (c) => (Array.isArray(c) && c.length === 2 && hexRgb(c[0]) && hexRgb(c[1]) ? [c[0], c[1]] : null);
+const paletteOf = (name) => (name === 'custom' ? customColours.map(hexRgb) : HEADROOM_ICON_PALETTES[name]);
+const CUSTOM_VARS = ['--ink-a', '--ink-b', '--accent-a', '--accent-b', '--glow', '--on-accent', '--focus', '--blob1', '--blob2', '--blob3', '--blob4', '--page', '--edge', '--shine'];
+function applyCustomVars(on) {
+  const st = document.documentElement.style;
+  if (!on) { for (const v of CUSTOM_VARS) st.removeProperty(v); return; }
+  const [a, b] = customColours.map(hexRgb);
+  const mix = (x, y, t) => x.map((v, i) => Math.round(v + (y[i] - v) * t));
+  const css = (c, alpha) => (alpha == null ? `rgb(${c.join(',')})` : `rgba(${c.join(',')},${alpha})`);
+  const lum = (c) => (0.2126 * c[0] + 0.7152 * c[1] + 0.0722 * c[2]) / 255;
+  const mid = mix(a, b, 0.5);
+  // The accent is also used for writing (the "HDR" in the title, the
+  // "recommended" tags), on a dark page. A dark colour is lifted toward
+  // white until it can be read there; a bright one is left as it is.
+  const readable = (c) => { let t = 0, r = c; while (lum(r) < 0.42 && t < 1) { t += 0.05; r = mix(c, [255, 255, 255], t); } return r; };
+  st.setProperty('--ink-a', css(readable(a)));
+  st.setProperty('--ink-b', css(readable(b)));
+  // A colour too dark to show as a filled slider or a switched-on switch is
+  // drawn there with some of the other mixed in (the icon and the page
+  // behind keep it as it was picked).
+  const fill = (c, other) => (lum(c) < 0.08 ? mix(c, lum(other) < 0.08 ? [150, 150, 160] : other, 0.4) : c);
+  st.setProperty('--accent-a', css(fill(a, b)));
+  st.setProperty('--accent-b', css(fill(b, a)));
+  st.setProperty('--glow', css(lum(mid) < 0.12 ? readable(lum(a) > lum(b) ? a : b) : mid, 0.55));
+  st.setProperty('--on-accent', lum(mid) > 0.5 ? '#16120c' : '#ffffff');
+  st.setProperty('--focus', css(mix(readable(a), [255, 255, 255], 0.3)));
+  st.setProperty('--blob1', css(a));
+  st.setProperty('--blob2', css(b));
+  st.setProperty('--blob3', css(mix(b, [30, 40, 90], 0.5)));
+  st.setProperty('--blob4', css(mix(a, [255, 255, 255], 0.4)));
+  st.setProperty('--page', `radial-gradient(120% 90% at 85% 0%, ${css(mix(a, [0, 0, 0], 0.78))} 0%, ${css(mix(b, [8, 10, 22], 0.86))} 45%, #090c18 100%)`);
+  st.setProperty('--edge', css(mix(a, [255, 255, 255], 0.75), 0.22));
+  st.setProperty('--shine', css(mix(a, [255, 255, 255], 0.8), 0.18));
+}
 let themeRevision = 0;
 let logoSource = null;
 const themeLogos = new Map();
 
 function colourThemeLogo(image, name) {
-  const [a, b] = HEADROOM_ICON_PALETTES[name];
+  const [a, b] = paletteOf(name);
   const pixels = image.data;
   for (let i = 0; i < pixels.length; i += 4) {
     if (!pixels[i + 3]) continue;
@@ -40,7 +81,8 @@ function colourThemeLogo(image, name) {
 }
 
 function themeLogo(name) {
-  if (!themeLogos.has(name)) {
+  const key = name === 'custom' ? `custom:${customColours.join()}` : name;
+  if (!themeLogos.has(key)) {
     const logo = (async () => {
       if (!logoSource) {
         logoSource = new Promise((resolve, reject) => {
@@ -59,10 +101,11 @@ function themeLogo(name) {
       ctx.putImageData(colourThemeLogo(ctx.getImageData(0, 0, 128, 128), name), 0, 0);
       return canvas.toDataURL('image/png');
     })();
-    themeLogos.set(name, logo);
-    logo.catch(() => { themeLogos.delete(name); logoSource = null; });
+    themeLogos.set(key, logo);
+    if (themeLogos.size > 12) themeLogos.delete(themeLogos.keys().next().value);
+    logo.catch(() => { themeLogos.delete(key); logoSource = null; });
   }
-  return themeLogos.get(name);
+  return themeLogos.get(key);
 }
 
 async function applyThemeLogo(name, revision) {
@@ -77,9 +120,12 @@ async function applyThemeLogo(name, revision) {
   }
 }
 
-function applyTheme(name) {
+function applyTheme(name, colours) {
   name = themeName(name);
+  const c = validColours(colours);
+  if (c) { customColours = c; try { localStorage.setItem('themeColours', JSON.stringify(c)); } catch (e) {} }
   document.documentElement.dataset.theme = name;
+  applyCustomVars(name === 'custom');
   const revision = ++themeRevision;
   try { localStorage.setItem('theme', name); } catch (e) {}
   void applyThemeLogo(name, revision);
@@ -90,12 +136,15 @@ document.addEventListener('DOMContentLoaded', () => {
 }, { once: true });
 
 let remembered = 'amber';
-try { remembered = localStorage.getItem('theme'); } catch (e) {}
+try { remembered = localStorage.getItem('theme'); customColours = validColours(JSON.parse(localStorage.getItem('themeColours'))) || customColours; } catch (e) {}
 applyTheme(remembered);
 try {
-  chrome.storage.onChanged.addListener((c, area) => { if (area === 'local' && c.theme) applyTheme(c.theme.newValue); });
+  chrome.storage.onChanged.addListener((c, area) => {
+    if (area !== 'local' || !(c.theme || c.themeColours)) return;
+    applyTheme(c.theme ? c.theme.newValue : document.documentElement.dataset.theme, c.themeColours ? c.themeColours.newValue : null);
+  });
   const beforeRead = themeRevision;
-  chrome.storage.local.get({ theme: 'amber' }, (o) => {
-    if (beforeRead === themeRevision && o) applyTheme(o.theme);
+  chrome.storage.local.get({ theme: 'amber', themeColours: null }, (o) => {
+    if (beforeRead === themeRevision && o) applyTheme(o.theme, o.themeColours);
   });
 } catch (e) {}

@@ -11,14 +11,17 @@
   .b3 { width: 200px; height: 200px; right: -60px; top: 300px; background: var(--blob3); }
   .b4 { width: 150px; height: 150px; left: -30px; top: 470px; background: var(--blob4); }
 
-  main { position: relative; z-index: 1; display: flex; flex-direction: column; gap: 7px; }
-  .card { padding: 7px 13px; }
+  /* Everything is sized so the popup stays under the 600 pixels a browser
+     gives it, with the "This site" card showing and a two-line status. */
+  body { padding: 10px; }
+  main { position: relative; z-index: 1; display: flex; flex-direction: column; gap: 5px; }
+  .card { padding: 5px 13px; }
 
-  .head { display: flex; align-items: center; gap: 10px; padding: 10px 12px 10px 10px; }
+  .head { display: flex; align-items: center; gap: 10px; padding: 7px 12px 7px 10px; }
   .logo { flex: none; width: 38px; height: 38px; border-radius: 10px; box-shadow: 0 0 16px var(--glow), 0 0 0 1px var(--edge); }
   .titles { flex: 1; min-width: 0; }
   h1 { font: 500 17px/1.1 "Iowan Old Style", "Palatino Linotype", Palatino, Georgia, serif; letter-spacing: .01em; }
-  h1 b { font-weight: 500; background: var(--accent); -webkit-background-clip: text; background-clip: text; color: transparent; }
+  h1 b { font-weight: 500; background: linear-gradient(120deg, var(--ink-a, var(--accent-a)), var(--ink-b, var(--accent-b))); -webkit-background-clip: text; background-clip: text; color: transparent; }
   .status { display: flex; align-items: flex-start; gap: 6px; margin: 3px 0 0; font-size: 11px; color: var(--ink-soft); }
   /* Never more than two lines: a third would make the popup taller than the browser allows. */
   #statusText { display: -webkit-box; -webkit-box-orient: vertical; -webkit-line-clamp: 2; overflow: hidden; }
@@ -30,7 +33,7 @@
   .cog[aria-pressed="true"] svg { transform: rotate(60deg); }
 
   .cardhead { display: flex; align-items: center; justify-content: space-between; gap: 8px; margin-bottom: 4px; min-height: 20px; }
-  .row { display: flex; align-items: center; justify-content: space-between; gap: 10px; min-height: 30px; margin: 0; cursor: pointer; }
+  .row { display: flex; align-items: center; justify-content: space-between; gap: 10px; min-height: 27px; margin: 0; cursor: pointer; }
   .row.plain { cursor: default; }
   .row.two { gap: 14px; }
   .row.two label { display: flex; align-items: center; justify-content: space-between; gap: 8px; flex: 1; min-width: 0; margin: 0; cursor: pointer; }
@@ -51,14 +54,15 @@
 
   /* One rhythm for the picture controls, with every control ending at the
      same right edge. Fixed button widths keep Load and Change from shifting. */
-  .controls-card .row { height: 32px; min-height: 32px; }
+  .controls-card { padding-block: 8px; }
+  .controls-card .row { height: 36px; min-height: 36px; }
   .controls-card .row > span:first-child { min-width: 0; }
   .controls-card .end { flex: 0 1 auto; min-width: 0; gap: 6px; }
-  .controls-card select { height: 28px; min-width: 0; max-width: 100%; font-size: 12px; padding: 3px 8px; }
-  .controls-card #calibrate, .controls-card #modelBtn { flex: none; width: 72px; height: 28px; padding: 4px 7px; font-size: 12px; }
+  .controls-card select { height: 26px; min-width: 0; max-width: 100%; font-size: 12px; padding: 3px 8px; }
+  .controls-card #calibrate, .controls-card #modelBtn { flex: none; width: 72px; height: 26px; padding: 4px 7px; font-size: 12px; }
   .controls-card #method { width: 101px; }
-  .controls-card #splitLeft, .controls-card #splitRight { width: 78px; padding-inline: 6px; }
-  .controls-card #perf { width: 179px; }
+  .controls-card #splitLeft, .controls-card #splitRight { width: 86px; padding-inline: 6px; }
+  .controls-card #perf, .controls-card #upscale { width: 179px; }
 
   /* Settings (the cog). */
   .set { display: flex; align-items: center; justify-content: space-between; gap: 10px; min-height: 40px; margin: 0; cursor: pointer; }
@@ -66,13 +70,20 @@
   .set .what { min-width: 0; }
   .set .name { display: block; font-weight: 600; }
   .set .hint { display: block; font-size: 11px; color: var(--ink-soft); }
-  .rec { display: inline-block; margin-left: 6px; padding: 0 6px; border-radius: 999px; font-size: 9.5px; font-weight: 700; letter-spacing: .04em; text-transform: uppercase; vertical-align: 1px; color: var(--accent-a); border: 1px solid var(--accent-a); opacity: .9; }
+  .rec { display: inline-block; margin-left: 6px; padding: 0 6px; border-radius: 999px; font-size: 9.5px; font-weight: 700; letter-spacing: .04em; text-transform: uppercase; vertical-align: 1px; color: var(--ink-a, var(--accent-a)); border: 1px solid var(--ink-a, var(--accent-a)); opacity: .9; }
   .swatches { display: flex; gap: 9px; }
   .swatch { width: 24px; height: 24px; padding: 0; border-radius: 50%; border: 2px solid var(--edge); cursor: pointer; }
   .swatch[aria-pressed="true"] { border-color: var(--ink); box-shadow: 0 0 10px var(--glow); }
   .swatch:focus-visible { outline: 2px solid var(--focus); outline-offset: 2px; }
+  input[type=color] { appearance: none; width: 34px; height: 24px; padding: 0; border: 2px solid var(--edge); border-radius: 8px; background: none; cursor: pointer; }
+  input[type=color]::-webkit-color-swatch-wrapper { padding: 0; }
+  input[type=color]::-webkit-color-swatch { border: 0; border-radius: 6px; }
+  input[type=color]:focus-visible { outline: 2px solid var(--focus); outline-offset: 2px; }
   .keys { font-size: 11px; color: var(--ink-soft); line-height: 1.7; padding: 4px 0 2px; }
-  #setView .set { min-height: 38px; }
+  #setView .set { min-height: 35px; }
+  #setView .controls-card { padding-block: 5px; }
+  #setView .controls-card .row { height: 32px; min-height: 32px; }
+  #setView .keys { line-height: 1.55; padding: 2px 0 0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
   #setView .keys { margin: 4px 0 0; padding: 3px 0 0; line-height: 1.55; }
 </style>
 </head>
@@ -92,7 +103,7 @@
       <input type="checkbox" class="sw" id="enabled" aria-label="Enabled">
     </header>
 
-    <div id="mainView" style="display:flex;flex-direction:column;gap:7px">
+    <div id="mainView" style="display:flex;flex-direction:column;gap:5px">
     <section class="card" id="siteBox" hidden>
       <div class="cardhead"><h2 class="eyebrow">This site</h2><span class="chip" id="siteName"></span></div>
       <div class="row plain two">
@@ -140,11 +151,33 @@
     </section>
 
     <section class="card controls-card">
+      <label class="row plain" for="perf" title="Auto draws at full resolution up to 4K at 60 frames a second, and lowers the render resolution if drawing takes the GPU too long. Best quality always draws at full resolution. Fastest draws at 1080p and skips sharpening and debanding."><span>Performance</span>
+          <select id="perf">
+            <option value="auto">Auto (recommended)</option>
+            <option value="best">Best quality</option>
+            <option value="fast">Fastest</option>
+          </select>
+      </label>
+      <label class="row plain" for="upscale" title="For video with fewer pixels than your screen (1080p on a 4K screen, say). Off leaves the stretching to the browser, which is soft. Fast is an edge-aware upscale in the style of AMD FSR 1. Best is a small trained network (FSRCNNX, as in mpv), which doubles the picture and costs the GPU far more; if the GPU can't fit it in, its smaller size is tried and then Fast. Auto uses Best and steps down by itself if your GPU can't fit it in; with Performance on Best quality it always uses the bigger network."><span>Upscaling</span>
+          <select id="upscale">
+            <option value="auto">Auto (recommended)</option>
+            <option value="best">Best (FSRCNNX)</option>
+            <option value="fast">Fast</option>
+            <option value="off">Off</option>
+          </select>
+      </label>
+      <label class="row" title="The small HDR badge in the corner of converted videos"><span>Badge on the video</span><input type="checkbox" class="sw" id="badge"></label>
+    </section>
+    </div>
+
+    <div id="setView" hidden style="display:flex;flex-direction:column;gap:5px">
+      <section class="card controls-card">
       <div class="row plain"><span id="headroomText"></span><button class="btn" id="calibrate">Calibrate</button></div>
       <div class="row plain" id="methodRow"><span>Method</span>
         <span class="end">
           <select id="method" aria-label="Conversion method">
             <option value="shader">Shader</option>
+            <option value="guided">Guided</option>
             <option value="model">Your model</option>
           </select>
           <button class="btn" id="modelBtn" title="Load, replace or remove a model made with HDR Trainer">Load</button>
@@ -155,28 +188,20 @@
           <select id="splitLeft" aria-label="Left side of the split" title="What the left side of the split shows">
             <option value="original">Original</option>
             <option value="shader">Shader</option>
+            <option value="guided">Guided</option>
             <option value="model">Model</option>
           </select>
           <select id="splitRight" aria-label="Right side of the split" title="What the right side of the split shows">
             <option value="original">Original</option>
             <option value="shader">Shader</option>
+            <option value="guided">Guided</option>
             <option value="model">Model</option>
           </select>
           <input type="checkbox" class="sw" id="split" aria-label="Split view">
         </span>
       </div>
-      <label class="row plain" for="perf" title="Auto draws at full resolution up to 4K at 60 frames a second, and lowers the render resolution if drawing takes the GPU too long. Best quality always draws at full resolution. Fastest draws at 1080p and skips sharpening and debanding."><span>Performance</span>
-          <select id="perf">
-            <option value="auto">Auto (recommended)</option>
-            <option value="best">Best quality</option>
-            <option value="fast">Fastest</option>
-          </select>
-      </label>
-      <label class="row" title="The small HDR badge in the corner of converted videos"><span>Badge on the video</span><input type="checkbox" class="sw" id="badge"></label>
-    </section>
-    </div>
+      </section>
 
-    <div id="setView" hidden style="display:flex;flex-direction:column;gap:7px">
       <section class="card">
         <div class="cardhead"><h2 class="eyebrow">Colours</h2>
           <div class="swatches" id="swatches">
@@ -184,13 +209,18 @@
             <button class="swatch" data-theme="ocean" title="Ocean" aria-label="Ocean" style="background:linear-gradient(135deg,#5ff0dc,#3aa0ff)"></button>
             <button class="swatch" data-theme="rose" title="Rose" aria-label="Rose" style="background:linear-gradient(135deg,#ff8fc0,#c06bff)"></button>
             <button class="swatch" data-theme="aurora" title="Aurora (the old pastel look; light or dark with your system)" aria-label="Aurora" style="background:linear-gradient(135deg,#cdb8f7,#ffc6de 60%,#bcdcff)"></button>
+            <button class="swatch" data-theme="custom" id="customSwatch" title="Custom: two colours of your own" aria-label="Custom"></button>
           </div>
+        </div>
+        <div class="row plain" id="customRow" hidden title="Your own theme: the glow, the light behind the glass and the icon are all made from these two colours.">
+          <span>Your two colours</span>
+          <span class="end"><input type="color" id="customA" aria-label="First colour"><input type="color" id="customB" aria-label="Second colour"></span>
         </div>
       </section>
 
       <section class="card">
         <div class="cardhead"><h2 class="eyebrow">Smooth playback</h2><span class="chip">leave these as they are</span></div>
-        <label class="set" title="Windows only, for video of 45 frames a second or more. Has the browser hand each redraw of the page to Windows a few milliseconds into the screen refresh instead of right at its start, where that hand-over can get stuck and make 4K 60 video stutter. Costs nothing on the page itself. On by default. With Stats on, Alt+Shift+A switches it off and on in 30-second turns, so one Report compares the two. On by default; leave it on unless you are testing. Only shown while Stats is on."><span class="what"><span class="name">Pacing <span class="rec">recommended: on</span></span><span class="hint">Stops 4K 60 stutter</span></span><input type="checkbox" class="sw" id="pace"></label>
+        <label class="set" title="Windows only, for video of 45 frames a second or more. Has the browser hand each redraw of the page to Windows a few milliseconds into the screen refresh instead of right at its start, where that hand-over can get stuck and make 4K 60 video stutter. Costs nothing on the page itself. With Stats on, Alt+Shift+A switches it off and on in 30-second turns, so one report compares the two. On by default; leave it on unless you are testing."><span class="what"><span class="name">Pacing <span class="rec">recommended: on</span></span><span class="hint">Stops 4K 60 stutter</span></span><input type="checkbox" class="sw" id="pace"></label>
         <label class="set" title="Makes the original video invisible while the overlay covers it, so the browser stops working on a picture nobody sees. On by default: with the original left showing, the player's controls appearing made the browser drop frames. Undone at once if drawing fails or the extension is switched off. If a video goes black, switch this off. With Stats on, Alt+Shift+O switches it, which works in fullscreen."><span class="what"><span class="name">Hide original <span class="rec">recommended: on</span></span><span class="hint">Saves the browser drawing it twice</span></span><input type="checkbox" class="sw" id="hideOriginal"></label>
         <label class="set" title="Looks at the video on every refresh of the screen and draws whenever its frame has changed, instead of relying only on the browser saying there is a new frame (which can come late, losing the frame). On by default. With Stats on, Alt+Shift+P switches it, which works in fullscreen."><span class="what"><span class="name">Every refresh <span class="rec">recommended: on</span></span><span class="hint">Never misses a new frame</span></span><input type="checkbox" class="sw" id="poll"></label>
       </section>
@@ -214,7 +244,7 @@
             <button class="btn quiet" id="cueTest" type="button">Test</button>
           </span>
         </div>
-        <p class="keys">On the page, with a video playing:<br><kbd>Alt+Shift+T</kbd> runs the whole test by itself (3½ min)<br><kbd>Alt+Shift+A</kbd> pacing on and off in turns (Stats on)</p>
+        <p class="keys" title="Press these on the page, with a video playing"><kbd>Alt+Shift+T</kbd> runs the whole test by itself (3½ min)<br><kbd>Alt+Shift+A</kbd> pacing on and off in turns (Stats on)</p>
       </section>
     </div>
   </main>

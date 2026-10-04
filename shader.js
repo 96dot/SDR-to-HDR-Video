@@ -8,6 +8,13 @@
 //   6. SCENE  L3 -> 1x1               whole-frame average, smoothed over time
 //   7. MAIN   frame + L1..L4 + scene -> HDR canvas
 //
+// and, when the video is smaller than the size it is drawn at and upscaling
+// is on, one more between 6 and 7:
+//
+//      UP     frame -> big frame      edge-aware upscale to the drawn size
+//
+// MAIN then reads the big frame instead of the frame.
+//
 // Why the copy: reading a pixel straight from a video frame is costly. The
 // browser has to fetch two planes (brightness and colour), convert them to
 // RGB and correct the colour space, every time. MAIN reads nine video pixels
@@ -22,8 +29,9 @@
 // much brighter should this pixel get". A model from HDR Trainer answers the
 // same question instead: it writes a small map of brightness curves (see
 // model.js), and modelGain() in MAIN reads each pixel's gain from it. MAIN can
-// use either, and split view can put any two of original, shader and model
-// side by side.
+// use either, or the shader with the model as its guide for where to brighten
+// (lightLike() in MAIN), and split view can put any two of them, or the
+// original, side by side.
 
 const SDR2HDR_LEVELS = [[480, 270], [120, 68], [30, 17], [8, 5]];
 
@@ -86,6 +94,127 @@ const SDR2HDR_COPY = SDR2HDR_COMMON + /* wgsl */ `
 fn fs(in: VOut) -> @location(0) vec4f {
   let c = textureSampleBaseClampToEdge(src, samp, in.uv).rgb;
   return vec4f(clamp(c, vec3f(0.0), vec3f(1.0)), 1.0);
+}
+`;
+
+// Upscale ("Fast"): the frame -> a frame of the size the picture is drawn at.
+//
+// This is the upscaling half of AMD's FidelityFX Super Resolution 1 (EASU),
+// written out in WGSL. For each output pixel it reads the 12 nearest pixels
+// of the frame, works out from their brightness which way the local edge runs
+// and how strong it is, and then blends the 12 with a small sharp-edged
+// kernel that is stretched along the edge and squeezed across it. Flat areas
+// get an ordinary soft blend; edges stay thin and don't turn into staircases
+// the way they do when the browser stretches the picture. The result is kept
+// within the range of the four nearest pixels, so it can't ring.
+//
+// It works on the picture as stored (gamma-encoded), as FSR expects.
+//
+// FidelityFX Super Resolution 1.0 is Copyright (c) 2021 Advanced Micro
+// Devices, Inc., and is used under the MIT licence (see LICENSE-FSR.txt).
+const SDR2HDR_UP = SDR2HDR_COMMON + /* wgsl */ `
+@group(0) @binding(0) var src: texture_2d<f32>;
+
+fn px(p: vec2i, lim: vec2i) -> vec3f {
+  return textureLoad(src, clamp(p, vec2i(0), lim), 0).rgb;
+}
+
+// FSR's quick stand-in for brightness.
+fn lum(c: vec3f) -> f32 { return c.b * 0.5 + (c.r * 0.5 + c.g); }
+
+struct Edge { dir: vec2f, len: f32 };
+
+// One of the four pixels around the output position (weight w), with its
+// neighbours: a above, b left, c itself, d right, e below.
+fn edgeAt(acc: Edge, w: f32, a: f32, b: f32, c: f32, d: f32, e: f32) -> Edge {
+  var o = acc;
+  let dx = d - b;
+  let lx = clamp(abs(dx) / max(max(abs(d - c), abs(c - b)), 1e-5), 0.0, 1.0);
+  let dy = e - a;
+  let ly = clamp(abs(dy) / max(max(abs(e - c), abs(c - a)), 1e-5), 0.0, 1.0);
+  o.dir += vec2f(dx, dy) * w;
+  o.len += (lx * lx + ly * ly) * w;
+  return o;
+}
+
+// The weight of one of the 12 pixels: off is where it sits from the output
+// position, turned to lie along the edge and scaled by len2.
+fn kernel(off: vec2f, dir: vec2f, len2: vec2f, lob: f32, clp: f32) -> f32 {
+  let v = vec2f(off.x * dir.x + off.y * dir.y, off.y * dir.x - off.x * dir.y) * len2;
+  let d2 = min(dot(v, v), clp);
+  var wb = 0.4 * d2 - 1.0;
+  var wa = lob * d2 - 1.0;
+  wb *= wb;
+  wa *= wa;
+  wb = 1.5625 * wb - 0.5625;
+  return wb * wa;
+}
+
+@fragment
+fn fs(in: VOut) -> @location(0) vec4f {
+  let size = vec2i(textureDimensions(src));
+  let lim = size - 1;
+  // Where this output pixel sits in the frame, in frame pixels.
+  let at = in.uv * vec2f(size) - 0.5;
+  let fl = floor(at);
+  let pp = at - fl;
+  let ip = vec2i(fl);
+
+  //    b c
+  //  e f g h
+  //  i j k l
+  //    n o
+  let b = px(ip + vec2i(0, -1), lim);
+  let c = px(ip + vec2i(1, -1), lim);
+  let e = px(ip + vec2i(-1, 0), lim);
+  let f = px(ip, lim);
+  let g = px(ip + vec2i(1, 0), lim);
+  let h = px(ip + vec2i(2, 0), lim);
+  let i = px(ip + vec2i(-1, 1), lim);
+  let j = px(ip + vec2i(0, 1), lim);
+  let k = px(ip + vec2i(1, 1), lim);
+  let l = px(ip + vec2i(2, 1), lim);
+  let n = px(ip + vec2i(0, 2), lim);
+  let o = px(ip + vec2i(1, 2), lim);
+  let bL = lum(b); let cL = lum(c); let eL = lum(e); let fL = lum(f);
+  let gL = lum(g); let hL = lum(h); let iL = lum(i); let jL = lum(j);
+  let kL = lum(k); let lL = lum(l); let nL = lum(n); let oL = lum(o);
+
+  var ed = Edge(vec2f(0.0), 0.0);
+  ed = edgeAt(ed, (1.0 - pp.x) * (1.0 - pp.y), bL, eL, fL, gL, jL);
+  ed = edgeAt(ed, pp.x * (1.0 - pp.y), cL, fL, gL, hL, kL);
+  ed = edgeAt(ed, (1.0 - pp.x) * pp.y, fL, iL, jL, kL, nL);
+  ed = edgeAt(ed, pp.x * pp.y, gL, jL, kL, lL, oL);
+
+  var dir = ed.dir;
+  let d2 = dot(dir, dir);
+  if (d2 < 1.0 / 32768.0) { dir = vec2f(1.0, 0.0); } else { dir = dir * inverseSqrt(d2); }
+  var len = ed.len * 0.5;
+  len *= len;
+  // A diagonal edge reaches further between pixels than an upright one.
+  let stretch = dot(dir, dir) / max(abs(dir.x), abs(dir.y));
+  let len2 = vec2f(1.0 + (stretch - 1.0) * len, 1.0 - 0.5 * len);
+  let lob = 0.5 + (0.25 - 0.04 - 0.5) * len;
+  let clp = 1.0 / lob;
+
+  var sum = vec3f(0.0);
+  var wsum = 0.0;
+  var w = kernel(vec2f(0.0, -1.0) - pp, dir, len2, lob, clp); sum += b * w; wsum += w;
+  w = kernel(vec2f(1.0, -1.0) - pp, dir, len2, lob, clp); sum += c * w; wsum += w;
+  w = kernel(vec2f(-1.0, 0.0) - pp, dir, len2, lob, clp); sum += e * w; wsum += w;
+  w = kernel(vec2f(0.0, 0.0) - pp, dir, len2, lob, clp); sum += f * w; wsum += w;
+  w = kernel(vec2f(1.0, 0.0) - pp, dir, len2, lob, clp); sum += g * w; wsum += w;
+  w = kernel(vec2f(2.0, 0.0) - pp, dir, len2, lob, clp); sum += h * w; wsum += w;
+  w = kernel(vec2f(-1.0, 1.0) - pp, dir, len2, lob, clp); sum += i * w; wsum += w;
+  w = kernel(vec2f(0.0, 1.0) - pp, dir, len2, lob, clp); sum += j * w; wsum += w;
+  w = kernel(vec2f(1.0, 1.0) - pp, dir, len2, lob, clp); sum += k * w; wsum += w;
+  w = kernel(vec2f(2.0, 1.0) - pp, dir, len2, lob, clp); sum += l * w; wsum += w;
+  w = kernel(vec2f(0.0, 2.0) - pp, dir, len2, lob, clp); sum += n * w; wsum += w;
+  w = kernel(vec2f(1.0, 2.0) - pp, dir, len2, lob, clp); sum += o * w; wsum += w;
+
+  let lo = min(min(f, g), min(j, k));
+  let hi = max(max(f, g), max(j, k));
+  return vec4f(clamp(sum / wsum, lo, hi), 1.0);
 }
 `;
 
@@ -169,7 +298,7 @@ fn fs(in: VOut) -> @location(0) vec4f {
 const SDR2HDR_MAIN = SDR2HDR_COMMON + /* wgsl */ `
 struct U {
   scale: vec2f,     // quad scale for object-fit handling
-  texel: vec2f,     // size of one pixel of the frame texture in uv
+  texel: vec2f,     // size of one pixel of the video frame in uv (before any upscaling)
   peak: f32,        // peak brightness as a multiple of SDR white
   strength: f32,    // 0..1, how far down the tonal range expansion reaches
   sat: f32,         // colour boost (1 = none)
@@ -183,13 +312,14 @@ struct U {
   gamut: f32,       // 0..1, how far vivid colours are stretched toward the P3 edge
   vivid: f32,       // 0..1, how much coloured lights are boosted like white ones
   lite: f32,        // 1 = skip sharpening and debanding (performance)
-  left: f32,        // what's shown left of the split line: 0 = the original, 1 = shader, 2 = trained model
+  left: f32,        // what's shown left of the split line: 0 = the original, 1 = shader, 2 = trained model, 3 = shader guided by the model
   right: f32,       // the same for the right of the line (and for the whole picture when split view is off)
   fit: vec2f,       // share of the model's 16:9 frame the video covers, across and down (model.js)
+  guide: vec2f,     // the model's gain for bright things that counts as "not a light" and as "a light" (see lightLike)
 };
 @group(0) @binding(0) var<uniform> u: U;
 @group(0) @binding(1) var samp: sampler;
-@group(0) @binding(2) var src: texture_2d<f32>;      // the video frame (see COPY)
+@group(0) @binding(2) var src: texture_2d<f32>;      // the video frame (see COPY), or the upscaled one (see UP)
 @group(0) @binding(3) var l1: texture_2d<f32>;
 @group(0) @binding(4) var l2: texture_2d<f32>;
 @group(0) @binding(5) var l3: texture_2d<f32>;
@@ -265,6 +395,40 @@ fn modelGain(uv: vec2f, lin: vec3f) -> f32 {
     + (c.b - c.g) * clamp((d - 0.7) / 0.2, 0.0, 1.0)
     + (c.a - c.b) * clamp((d - 0.9) / 0.1, 0.0, 1.0);
   return exp2(g);
+}
+
+// Guided: the model says where, the shader says how much.
+//
+// On its own the model is timid: it is trained to be right on average, so
+// where it can't tell a lamp from a white shirt it gives both a little. But
+// it still gives the lamp more. The shader is the other way about: bold, and
+// crude about where, going by the size of a bright area (coverage). So here
+// the model's gain for bright things at this spot (the average of its two top
+// curve points) is turned into "how light-like is the bright stuff here",
+// 0..1, between two levels that HDR Trainer measures for the model on scenes
+// it wasn't trained on (u.guide). That takes the place of the size rule in
+// expansionGain: a big bright thing the model takes for a light gets the full
+// boost, and a small white thing it doesn't gets the least.
+fn lightLike(uv: vec2f) -> f32 {
+  let c = textureSampleLevel(curves, samp, (uv - 0.5) * u.fit + 0.5, 0.0);
+  return smoothstep(u.guide.x, u.guide.y, 0.5 * (c.b + c.a));
+}
+
+// What stands in for coverage in expansionGain when the model is the guide.
+//
+// The model sees the frame at 480x270 and answers on a 120x68 grid, so a
+// light a few pixels across (stage lights, stars, far-off windows) is too
+// small for it to have an opinion about: it gives the whole neighbourhood a
+// middling answer, and such lights came out a quarter dimmer than the shader
+// alone makes them (measured on an HDR screenshot of a concert: 3.2 times
+// white against 4.4). For something that small the shader's own rule, "small
+// and on its own means a light", is the better judge. So: how much of this
+// spot's cell on that same 120x68 grid is highlight (level 2 of the pyramid)
+// says whether the model can see the thing. Where it can't, the shader's
+// coverage is used; where it can, the model's answer.
+fn guidedCoverage(uv: vec2f, coverage: f32) -> f32 {
+  let seen = smoothstep(0.15, 0.6, textureSampleLevel(l2, samp, uv, 0.0).g);
+  return mix(coverage, 1.0 - lightLike(uv), seen);
 }
 
 // Roll-off for the model. The model isn't bound by the Peak slider, so here
@@ -407,7 +571,8 @@ fn fs(in: VOut) -> @location(0) vec4f {
   // Which picture this pixel shows: split view can put a different one on
   // each side of the line.
   let side = select(u.right, u.left, u.split > 0.5 && in.uv.x < u.splitPos);
-  let useModel = side > 1.5;
+  let useModel = side > 1.5 && side < 2.5;
+  if (side > 2.5) { gain = max(1.0, expansionGain(bright, guidedCoverage(in.uv, coverage), scene) * shape); }
   // The model reads the picture without the dither added above: its curves
   // are steep near white, where that noise would show as grain.
   if (useModel) { gain = modelGain(in.uv, toLinear(clamp(smoothed, vec3f(0.0), vec3f(1.0)))); }

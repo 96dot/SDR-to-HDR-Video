@@ -2,7 +2,7 @@
 
 (Called "SDR to HDR Video" before 0.11.) The name is the thing it uses: the brightness above white that an HDR display has to spare.
 
-**The popup.** Picture controls up front. The cog opens settings: colour theme (Amber, Ocean, Rose, or the old pastel Aurora), the three playback switches that are best left on (each says what is recommended), and diagnostics (Stats, Copy report, the wiggle sound, and the test keys).
+**The popup.** Picture controls up front. The cog opens settings: colour theme (Amber, Ocean, Rose, the old pastel Aurora, or Custom: two colours of your own), the three playback switches that are best left on (each says what is recommended), and diagnostics (Stats, Copy report, the wiggle sound, and the test keys).
 
 The selected theme controls the popup colours and the generated highlight icon in its header and the browser toolbar. The browser's extensions list keeps the default icon.
 
@@ -10,6 +10,11 @@ A Chromium extension that converts ordinary (SDR) web video to HDR in real time 
 
 It is in the same spirit as Nvidia's RTX Video HDR, but works on any GPU that supports WebGPU. It was built and tuned on an AMD Radeon RX 9070 XT.
 
+<p>
+  <img src="docs/popup-main.png" alt="The popup" width="300">
+  <img src="docs/popup-settings.png" alt="Settings and diagnostics, behind the cog" width="300">
+  <br><img src="docs/themes.png" alt="The four colour themes: Amber, Ocean, Rose, Aurora" width="620">
+</p>
 
 ## Requirements
 
@@ -32,7 +37,7 @@ To update, replace the folder's contents, click the reload arrow on the extensio
 
 The extension can't ask the browser how bright your display goes, so it has a calibration page.
 
-1. Open the popup and click **Calibrate**.
+1. Open the popup, click the cog for the settings, and click **Calibrate**.
 2. Drag the slider right until the cross just disappears into the square.
 3. Nudge it back until you can barely see the cross, then **Save**.
 
@@ -58,18 +63,18 @@ If your monitor does its own tone mapping, the cross may never vanish completely
 
 ### Using a trained model
 
-The shader decides how bright each part of the picture gets with hand-written rules. A model trained with HDR Trainer (a separate program) can make that decision instead, from what it learned comparing real HDR movies with their SDR versions.
+The shader decides how bright each part of the picture gets with hand-written rules. A model trained with HDR Trainer (a separate program) learns the same thing by comparing real HDR movies with their SDR versions, and can be used two ways. **Guided** (what loading a model switches on): the shader still decides how much brighter highlights get, and the model decides where, telling lights from things that are merely white, which the shader can only guess at from the size of a bright area. **Your model**: the model makes the whole decision. That is truer to how films are graded and much tamer: it is trained to be right on average, so it hedges everywhere but on pure white.
 
 1. In HDR Trainer, click **Export model**. It writes `hdr-trainer/workspace/export/hdr-model.json`.
-2. In the popup, click **Load** next to **Method**, then **Choose model file** and pick that file.
-3. The extension switches to the model straight away. Videos already playing pick it up within a second, and the badge reads **HDR · MODEL**.
+2. In the popup's settings (the cog), click **Load** next to **Method**, then **Choose model file** and pick that file.
+3. The extension switches to Guided straight away. Videos already playing pick it up within a second, and the badge reads **HDR · GUIDED**. Split view is set to Shader | Guided, so switching Split on shows what the model changes. **Method** (in the settings) chooses between Shader, Guided and Your model.
 
 To load a newer export, do the same again; it replaces the old one. **Remove model** on that page goes back to shader only.
 
 Comparing the two:
 
-- **Method** in the popup switches between **Shader** and **Your model**. **Alt+Shift+M** does the same from the keyboard, which is the quickest way to flip back and forth on the same scene.
-- **Split** shows two pictures at once, one each side of a line you can drag. Its two menus pick what each side shows: **Original**, **Shader** or **Model**. Set them to Shader and Model to put the two methods side by side, or to Original and Model to see the model against the untouched video.
+- **Method** in the popup's settings switches between **Shader**, **Guided** and **Your model**. **Alt+Shift+M** goes round the three from the keyboard, which is the quickest way to flip back and forth on the same scene.
+- **Split** shows two pictures at once, one each side of a line you can drag. Its two menus pick what each side shows: **Original**, **Shader**, **Guided** or **Model**. Set them to Shader and Guided to see what the model changes, to Shader and Model to put those two side by side, or to Original and Model to see the model against the untouched video.
 
 What changes while the model is in use:
 
@@ -98,13 +103,14 @@ On some sites nothing gets converted and the popup says "A video here is locked 
 
 Switching on **Unlock locked videos** for that site adds the missing permission to video the site loads, then reloads the video so it takes effect. Your place in the video, the speed and whether it was playing are kept. If the video won't load that way, it is put back as it was and stays unconverted.
 
-What you are agreeing to when you switch it on: on that site, the page's own scripts gain the same ability to read the video that the extension gets. For a site you'd watch video on anyway that is rarely a concern, but it is why this is off by default and set per site. It affects video and audio requests made by that site's pages only, lasts until the browser is closed, and is removed as soon as you switch it off.
+What you are agreeing to when you switch it on: on that site, the page's own scripts gain the same ability to read the video that the extension gets. For a site you'd watch video on anyway that is rarely a concern, but it is why this is off by default and set per site. It affects video and audio requests made by that site's own pages, in the tab where a video needed it, and nothing else: a frame from another site inside the page (an advert, an embedded player) is not given it, which also means a locked video inside such a frame stays locked. It lasts until the tab or the browser is closed, and is removed as soon as you switch it off.
 
 It does not work on DRM-protected video; nothing does.
 
 ### Other
 
 - **Enabled** (top-right switch): master on/off for all sites.
+- **Upscaling**: how a video with fewer pixels than your screen is made bigger. **Off** leaves it to the browser, which is soft. **Fast** is an edge-aware upscale in the style of AMD FSR 1. **Best** is FSRCNNX, the small trained network mpv users know (by igv): it doubles the picture, costs the GPU far more, and is used where the picture is made at least 1.3 times bigger. **Auto** (the default) uses Best at any frame rate, and with Performance on Auto steps down by itself if the GPU's own timing says it can't fit it in (the smaller size of the network, then Fast, then off); the next video on the page starts where the last one ended up. In a browser that doesn't let the GPU be timed, Auto keeps Best for video under 45 frames a second. With Performance on Best quality the bigger network is always used; with Fastest, upscaling is off.
 - **Performance**: how hard the extension works your GPU.
   - *Auto* (default) draws anything up to 4K at 60 frames a second at full size, and 4K at 120 at 1440p, scaled up. From there it goes by how long a frame's drawing actually takes the GPU, which it measures now and then: if that is more than half the time between two frames it steps down, to 1440p and then to 1080p with sharpening and debanding off. If frames are being lost while the GPU has time to spare, lower quality can't help, so it is left alone and the popup says the frames are being lost outside the GPU. In a browser that can't time the GPU, it steps down when frames are dropped for two measurements in a row (about six seconds). Steps that would change nothing on your screen are skipped. It starts afresh for each new video.
   - *Best quality* always renders at your screen's resolution with everything on.
@@ -112,8 +118,8 @@ It does not work on DRM-protected video; nothing does.
 - **Hide original** (on by default): makes the original video invisible while the overlay is covering it. The browser otherwise goes on preparing the original for the screen as well, which takes frames the video decoder needs: with it showing, the player's controls appearing made the decoder drop frames for seconds at a time (measured on YouTube at 4K 60: 134 hitches in 52 seconds with it showing, 3 in 26 with it hidden). The video keeps playing, keeps its place on the page and still takes clicks, and it is made visible again the moment drawing fails or the extension is switched off. It isn't applied to a video that uses the browser's built-in controls. If a video ever goes black, switch this off.
 - **Every refresh** (on by default): looks at the video on every refresh of your display and draws whenever the frame it is showing has changed. The browser also announces each new frame, and drawing used to rely on that alone, but the announcement can come a refresh late, and by then that frame has been replaced by the next and is lost. Each new frame is first copied into a short queue (three copies are kept), and one is put on screen per refresh, in order, so a frame that turns up a moment late still gets its turn instead of being skipped. Nothing is drawn twice: a refresh with no new frame costs one cheap look. Switch it off only to find out whether it is causing a problem; drawing then relies on the browser's announcements alone.
 - **Pacing** (on by default; Windows only, and only for video of 45 frames a second or more): has the browser hand each redraw of the page to Windows about 5 ms into the screen refresh instead of right at its start, where that hand-over can get stuck and make 4K 60 video stutter (see "Performance" under "How it works"). It runs in a worker of its own and costs the page nothing. Switch it off only to find out whether it is causing a problem.
-- **Method**: what decides the brightness, the built-in **Shader** or **Your model**. See "Using a trained model". The button next to it loads, replaces or removes a model.
-- **Split**: split view. The switch turns it on; the two menus choose what is shown left and right of the line: **Original** (the untouched video), **Shader** or **Model** (needs a loaded model). Any pairing works, for example Original and Shader, Shader and Model, or Model and Original. Drag the line on the video to move it. Changing **Method** also puts the new method on the right-hand side, so the split keeps comparing against what you are using until you choose otherwise.
+- **Method** (in the settings): what decides the brightness: the built-in **Shader**, **Guided** (the shader, with your model saying where the lights are) or **Your model**. See "Using a trained model". The button next to it loads, replaces or removes a model.
+- **Split**: split view. The switch turns it on; the two menus choose what is shown left and right of the line: **Original** (the untouched video), **Shader**, **Guided** or **Model** (the last two need a loaded model). Any pairing works, for example Original and Shader, Shader and Model, or Model and Original. Drag the line on the video to move it. Changing **Method** also puts the new method on the right-hand side, so the split keeps comparing against what you are using until you choose otherwise.
 - **Badge**: shows or hides the HDR badge.
 - **Stats**: turns the badge into a live readout that stays visible, so it can be read in fullscreen where the popup can't be opened. For example `HDR · 60 fps · 0% dropped · longest gap 18 ms · 3440x1440 · drawing: queue · original invisible`: new video frames drawn per second, the share of the video's frames that were never drawn, the longest wait between two frames, the size drawn at, how frames are being drawn, and whether the original is hidden. The numbers refresh about every three seconds and read "measuring" until the first clean stretch of playback.
 
@@ -190,7 +196,7 @@ Three keys work while Stats is on, including in fullscreen, and the report count
 
 On Windows (or anywhere with Stats on), while a video of 45 frames a second or more is being converted, the browser's GPU thread is asked directly, and a beat is held as soon as it shows the hand-over stuck: a worker puts a question to the browser's GPU process that takes no work to answer, about thirty times a second, and times the answer. The answer has to come from the one thread that also hands redraws to Windows, so while a hand-over is stuck the answer arrives with the next screen refresh and not before. The report says how often that happened with pacing on and off, lists each time the hand-over was stuck (when, for how long, and how soon a beat followed), and has a small table of how long the answer took at each moment of the refresh, which shows at what moment the browser is busy handing over.
 
-It never draws the picture with more pixels than the video has (unless Performance is set to Best quality); the browser scales the smaller picture back up to fit.
+With Upscaling off it never draws the picture with more pixels than the video has (unless Performance is set to Best quality); the browser scales the smaller picture back up to fit. With Upscaling on, a smaller video is drawn with as many pixels as the screen has, and an extra pass between the scene average and the main pass does the scaling up with regard for edges (the upscaling half of AMD's FidelityFX Super Resolution 1, under its MIT licence: see `LICENSE-FSR.txt`).
 
 The extension also keeps its background work light while a video plays: looking for new video players happens in the browser's idle time, and the check for an HDR stream happens every few seconds.
 
@@ -262,6 +268,9 @@ The extension makes no network requests.
 | `ui.css` | Shared styling for the popup and calibration page. |
 | `icons/` | Generated raster icon artwork, browser sizes and colour variants for the four themes. |
 | `CHANGELOG.md` | What changed in each version. |
+| `upnet.js` | Reads the FSRCNNX shader files and turns their passes into WGSL, for the Best level of Upscaling. |
+| `third_party/fsrcnnx/` | The FSRCNNX shader files by igv, unchanged, under the LGPL 3 (their licence texts are beside them). Not under the MIT licence of the rest. |
+| `LICENSE-FSR.txt` | The licence of AMD's FidelityFX Super Resolution 1, which the upscaling pass is a port of. |
 | `docs/` | Screenshots used in this README. |
 
 ## Testing status
@@ -276,4 +285,4 @@ The trained-model path was checked the same way: fed a real video frame, the GPU
 
 ## License
 
-[MIT](LICENSE)
+[MIT](LICENSE), except the two FSRCNNX shader files in `third_party/fsrcnnx/`, which are igv's and under the LGPL 3 (see the README there). The Fast upscaling pass is a port of AMD's FidelityFX Super Resolution 1, used under its MIT licence (`LICENSE-FSR.txt`).

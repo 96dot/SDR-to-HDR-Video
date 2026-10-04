@@ -2,6 +2,151 @@
 
 All notable changes to Headroom HDR (called SDR to HDR Video before 0.11). Versions follow the number in `manifest.json`.
 
+## 1.2.2 - 2026-10-04
+
+Fixes from a review of the whole extension by a second model, each one checked against the code before it was changed.
+
+### Security
+
+- **"Unlock locked videos" could be used by a frame from another site.** Permission was checked against the site in the address bar, but the rule was made for whichever frame asked. An advert or embed from another site inside an unlocked page could so get a rule for its own origin, good in every tab until the browser closed, letting that site read video and audio from anywhere with your cookies. Now only the site's own frames (the site itself or a subdomain of it) are given a rule, and a rule only applies in the tab that asked. It is removed when that tab closes. A locked video inside a frame from another site now stays locked.
+- **A page could press the extension's shortcuts for you.** Alt+Shift+T, A, O and P were accepted from key events a page made up. A page could start the self-test, which switches converting off on every site for half a minute and Stats on, and keep doing it. Only real key presses count now.
+
+### Fixed
+
+- **The self-test could leave the extension switched off.** Closing or reloading the page in its first 30 seconds left converting off for every site until you found the switch. The settings it changes are now remembered and put back when the page closes, when the test is stopped by hand, and by the next page to load if the browser itself was closed or crashed. A test that is stopped or abandoned also puts Stats back as it was; one that finishes leaves Stats on for the report, and says so.
+- Changing any per-site setting (dragging a slider with "Own settings" on, switching a site off) removed every unlock rule, so an unlocked video that was playing stopped loading. Only the rules of sites that no longer have unlocking on are removed now. Two locked videos asking at once could also be given the same rule number, and one would fail.
+- A video the page moved into another container was left invisible there while the overlay went on drawing in the old place. The overlay now starts again beside the video.
+- Half rate (every other frame, to let the decoder catch up) could go on for as long as the mouse kept moving anywhere on the page. After a minute of the decoder being well it now goes back to every frame.
+- Where the browser's GPU thread is not being asked (not Windows, or a 120 or 144 Hz screen), going fullscreen could be taken for a stuck screen queue and cost a held beat and a spell at half rate. The guesses are not acted on in the second and a half after a fullscreen change.
+- Auto quality, with upscaling on and a screen smaller than 4K, skipped the level that would only have switched upscaling off and went straight to the lowest, losing sharpening and debanding for nothing.
+- The upscaling network's textures could be made for a single frame of the wrong size after the canvas grew (about 300 MB, thrown away at the next frame).
+- With a model on screen a bind group was made anew for every video frame. They are kept now.
+- The A/B test could not be stopped once Stats was switched off.
+- The toolbar icon could turn amber when a Custom theme colour was changed after the extension had been idle; a colour picked just as the popup closed could be lost.
+- Videos the browser would not let the extension read were remembered until the popup was next opened, even after the page had removed them.
+- The FSRCNNX reader refused unknown lines in a pass but ignored directions it didn't know (another size, an offset, another plane). It refuses those too. The two files shipped have none.
+- The "Copy report" button read "Report" after its first use. The settings view can no longer grow past the popup's height limit if the shortcut lines wrap in another font. README, tooltip and shortcut descriptions brought up to date with Guided and with the controls that moved into the settings.
+
+### Found and left alone, because they change the picture
+
+- At 4K the first analysis pass reads only a quarter of the frame's pixels, so a very small bright thing can be counted or missed depending on where it sits. Fixing it changes the highlight and scene measurements slightly.
+- The highlight roll-off works out the brightest value the pipeline can make without counting Shaping, so with Shaping on the very middle of a big blown-out area can flatten at the display's maximum. Fixing it lowers the top highlights a little (about 3.92 to 3.85 times white at the defaults).
+
+### Tested, and not
+
+- Checked here: the unlock rules (own frame and subdomain given, another site's frame refused, two at once, kept through a settings change, removed when switched off); a made-up key press does nothing and a real one works; the self-test puts settings back when the page closes, after a simulated crash, and when stopped by hand; the FSRCNNX files still read and bad ones are refused; the network's numbers, upscaling, Guided and the popup give the same results as before.
+- Not checked: the playback fixes (half rate cap, fullscreen guard, moved video, auto quality) on real video. They were made by reading the code.
+
+## 1.2.1 - 2026-10-03
+
+### Fixed
+
+- **Guided made pinpoint lights dimmer than the shader does.** Measured on an HDR screenshot of a concert, split Shader | Guided: tiny white stage lights were 4.4 times white on the shader's side and every small light on the guided side stopped at 3.2. The model looks at a 480x270 copy of the frame and answers on a 120x68 grid, so a light a few pixels across is too small for it to have an opinion about; it gave the whole area a middling answer and the lights a middling boost. Now, where a bright thing is too small for the model to see (little of its cell on that grid is highlight), the shader's own rule decides, as it does without a model: small and on its own means a light. Anything bigger (faces, windows, sky, walls) is still the model's call.
+
+### Tested, and not
+
+- Checked here with made-up models, in software rendering: with a model that calls nothing a light, a 5-pixel white dot now gets the shader's full boost while a big white area and a 60-pixel square still get the least; the 1.2.0 checks give the same numbers as before.
+- Not checked on real video. Where exactly "too small to see" ends (a light around 15 to 30 pixels across at 4K is in between) is a judgment made from the grid's size, not from footage.
+
+## 1.2.0 - 2026-10-03
+
+### Added
+
+- **Guided**, a third Method (in the settings, with a model loaded): the shader guided by your trained model. The shader still decides how much brighter highlights get, with every slider working as before. The model decides where: how light-like the bright things in each part of the picture are.
+  - Why: used by itself the model is tame. It is trained to be right on average, so where it can't tell a lamp from a white shirt it gives both a little, and only pure white gets a clear boost. But it still gives the lamp more than the shirt, and that ordering is what the shader lacks: the shader tells lights from white things by the size of the bright area, which dims a big light (a window, a sky, an explosion) and boosts a small white thing (lettering, a collar).
+  - How: the model's gain for bright things at each spot takes the place of the shader's size rule. A bright thing the model takes for a light gets the full boost whatever its size; one it doesn't gets the least. The rest of the shader (the reach down the tonal range, less for bright scenes, the shaping of blown-out areas, colour, roll-off) is unchanged.
+  - Where "a light" and "not a light" sit on the model's scale is measured for each model by HDR Trainer 0.5 at export, on scenes the model wasn't trained on, and saved in the model file. A model exported before that still works as a guide, with rough levels.
+- Loading a model now switches on Guided, and sets the split view to Shader | Guided, the comparison that shows whether the model is helping. "Your model" (the model doing the whole job) is still there.
+- The model page shows how well the model's ordering of bright regions agrees with real HDR, as measured by HDR Trainer.
+- The method shortcut goes round all three: shader, guided, model. The badge says HDR · GUIDED.
+
+### Tested, and not
+
+- Checked here with made-up models, in software rendering: with a model that calls everything a light, a big white area gets the same full boost as a small one (5.2 times white at Peak 8, where the shader alone gives the big one 2.9); with one that calls nothing a light, both get the least (2.9); Guided chosen with no model loaded is the shader exactly; split view, the shortcut, the popup and the model page all follow.
+- Not checked: how it looks with a real trained model on real video. Whether the model's ordering is good enough to beat the shader's size rule is exactly what the Shader | Guided split is for, and the agreement figure on the model page is the first hint: near zero means it won't be.
+
+## 1.1.6 - 2026-10-03
+
+### Changed
+
+- The margin around the popup is the same on every side: 10 pixels. Top and bottom were 8, from when the popup was short of height, which showed at the corners as a wider gap beside the cards than under them.
+
+### Not possible
+
+- Rounding the popup's own corners. Its outline is a window the browser draws, and an extension can neither change that window's shape nor make its background see-through.
+
+## 1.1.5 - 2026-10-03
+
+### Changed
+
+- **Display max (Calibrate), Method and Split moved to the settings** (the cog), as the first card there. The main view under the sliders is now just Performance, Upscaling and Badge on the video, with 36 pixels a row.
+- **"Badge on the video" is back on the main view.**
+- To fit the three rows, the settings view is a little tighter (its switches are 35 pixels a row where they were 38), and the line "On the page, with a video playing:" above the keyboard shortcuts became their tooltip. Worst case it is 581 pixels of the 600 a browser allows; the main view is 520.
+
+## 1.1.4 - 2026-10-03
+
+### Changed
+
+- **More room between the controls** under the sliders (Display max, Method, Split, Performance, Upscaling): each row is 34 pixels high where it was 29, so the dropdowns no longer nearly touch, and the card has a little more space above and below.
+- To make that room, **"Badge on the video" moved to the settings** (the cog), into the card with the colour themes, now headed "Look". A browser gives a popup 600 pixels of height and no more, and with the Upscaling row added there were 20 left.
+
+## 1.1.3 - 2026-10-03
+
+### Fixed
+
+- **The upscaling network steps down sooner.** In the 1.1.2 report (1440p at 60, fullscreen at 4K) the bigger network took the GPU 9.2 ms a frame, and it was 28 seconds before the extension switched to the smaller one: the check sat behind the one that waits while frames are being let go by for the decoder, which was happening the whole time. It is now made first, as soon as there are timings to go by (a few seconds), and at four tenths of a frame's time where it was a half.
+
+### Seen working
+
+- The step down itself, for the first time on a real GPU: "a frame's work takes the GPU 9.2 ms with the upscaling network FSRCNNX 16; trying FSRCNNX 8", after which a frame's work was 3.4 ms.
+
+### Not tested
+
+- The earlier step down was checked only by reading the code and loading the extension; software rendering here is too slow to trigger it.
+
+## 1.1.2 - 2026-10-03
+
+### Changed
+
+- **Upscaling on Auto now uses Best (FSRCNNX) at any frame rate**, not only under 45 frames a second, and leaves it to the GPU's own timing to say when that is too much. Measured on a Radeon RX 9070 XT (1.1.1 report): the bigger network on 1080p at 60 frames a second, drawn at 4K in fullscreen, took 3.7 ms of the 16.7 a frame has (7.3 at worst), with 6 hitches in 184 seconds and no frames dropped by the decoder.
+- When the GPU does say it is too much (a frame's work over half a frame's time, Performance on Auto), the step down is remembered for the page: the next video at least as heavy (pixels times frame rate) starts at the smaller network or Fast, where the last one ended up, and doesn't stutter through the same discovery again. Reloading the page forgets it.
+- In a browser that doesn't let the GPU be timed there is nothing to step down by, so there Auto keeps the old rule: Best under 45 frames a second, Fast from there up.
+
+### Not tested
+
+- The step down still has not been seen to happen on a real GPU: this one never needed it. Its remembering was not tested at all.
+
+## 1.1.1 - 2026-10-03
+
+### Added
+
+- With Stats on, the badge on the video says which upscaler is drawing right now, after the drawn size: "upscale: Best (FSRCNNX 16)", "Best (FSRCNNX 8)", "Best (...) + Fast" when Fast takes the doubled picture the rest of the way, "Fast", "Fast (Best not in use)" when Best was wanted but isn't drawing (the report says why), "not needed" when the video has as many pixels as it is drawn with, or "off". It changes the moment the upscaler does, so a step down is seen as it happens.
+
+## 1.1 - 2026-10-03
+
+### Added
+
+- **Upscaling**, a new setting under Performance, for video with fewer pixels than your screen (1080p on a 4K screen, say). Until now such a video was drawn with as many pixels as it has and the browser stretched it over the screen, which is soft. Now the picture is drawn with as many pixels as the screen has, and the extension does the stretching itself.
+  - **Fast**: an edge-aware upscale, the upscaling half of AMD's FidelityFX Super Resolution 1 (EASU) written out for WebGPU. It looks at the 12 nearest pixels, finds which way the edge runs and blends along it, so lines stay thin and don't turn into staircases.
+  - **Best (FSRCNNX)**: the small trained network mpv users know, by igv. It doubles the picture's brightness detail (colour is stretched the plain way and shifted to match, as in mpv); where the picture is drawn more than twice as big, Fast takes it the rest of the way. Both published sizes are included: the 16-channel one is used first, and the 8-channel one if the GPU can't fit the bigger in. It is only used where the picture is made at least 1.3 times bigger, the same rule the files have for mpv.
+  - **Auto** (the default): Fast for video of 45 frames a second or more, Best below that, Fast until the frame rate is known. With Performance on **Best quality**, Best (the bigger network) is used whatever the frame rate.
+  - **Off**: as before.
+- Upscaling steps down by itself when Performance is Auto and the GPU says a frame's work takes more than half a frame's time: the bigger network, then the smaller, then Fast, then off with the rest of the quality levels. It is off when Performance is Fastest, when a screen's worth of pixels at the video's frame rate is over Auto's pixel budget (4K at 120), and when the video already has as many pixels as it is drawn with.
+- The Sharpness control works on the upscaled picture, one screen pixel wide.
+- The report says which upscaling is in use and from what size to what (and, when Best was wanted and Fast is drawing, why), on the "Timings" line and in the settings line. The popup's status line says "upscaled to 2160p", and its tooltip which upscaler.
+- `third_party/fsrcnnx/`: the two FSRCNNX shader files exactly as igv published them, with their licence (LGPL 3, not the MIT licence of the rest). The extension reads a file as text and turns its passes into the browser's shader language as it loads (`upnet.js`), refusing any line it doesn't know. `LICENSE-FSR.txt`: AMD's MIT licence for the Fast pass.
+
+### Changed
+
+- With upscaling on, a 1080p video on a 4K screen is drawn at 4K, where it used to be drawn at 1080p. That is about four times the GPU work for the main pass, the same as a 4K video has always been, before the upscaler's own work. Set Upscaling to Off to have the old behaviour.
+- In split view the Original side is upscaled the same way as the other side, so the two differ only in brightness and colour.
+
+### Tested, and not
+
+- Checked here, in software rendering (headless Chromium): the network as the extension runs it gives the same numbers as a separate plain reading of the shader files, to within one step of the 10-bit picture, for both sizes. Shrinking a photo and upscaling it again, it comes closer to the original than bicubic does (about 36 dB against 33 on one photo; on another, very detailed one, no better than bicubic unless the photo was shrunk the way the network was trained for). Fast and Best both give visibly thinner, cleaner lines than the browser's stretch on a test pattern; 2x, 3x and 1.5x all draw; every combination of Upscaling and Performance picks what it should; the smaller network and the fall-back to Fast work when forced.
+- Not checked: anything on a real GPU. What either network costs at 1080p on a Radeon RX 9070 XT, whether the bigger one fits in a 60 frames a second video with Performance on Best quality (nothing steps it down there: that is what Best quality means), and whether drawing 1080p 60 at 4K brings back any stutter. The automatic step-down itself could not be made to trigger here, because software rendering is too slow for the frame measurements it goes by; only the steps it leads to were checked.
+- The network's textures take GPU memory: about 315 MB for a 1080p video with the bigger network, 180 MB with the smaller.
+
 ## 1.0 - 2026-10-03
 
 ### Changed
@@ -9,6 +154,18 @@ All notable changes to Headroom HDR (called SDR to HDR Video before 0.11). Versi
 - Improved spacing and card styling in the popup.
 - Replaced the purple icon with generated highlight artwork, sized for the browser toolbar and popup header.
 - The toolbar and header icons follow the selected Amber, Ocean, Rose or Aurora theme. The browser's extensions list uses the default icon.
+
+### Added
+
+- **A Custom colour theme**: a fifth swatch in the settings, with two colours of your own. The glow, the light behind the glass, the page behind it and the icon (in the popup and the toolbar) are all made from the two. The calibration and model pages follow it too.
+
+### Fixed
+
+- **The popup fits.** On a real site it also shows the "This site" card, and with that and a two-line status it came to about 615 pixels, where a browser gives a popup 600 and adds a scrollbar. Spacing is tightened: the worst case is now 551.
+- A dark colour in the Custom theme (black, say) no longer makes the "HDR" in the title and the "recommended" tags unreadable, or the filled part of a slider invisible: writing in the accent is lifted toward white until it can be read, and fills take on some of the other colour.
+- The Split dropdowns are a little wider, so "Original" is not squeezed.
+
+Playback is the same code as 0.10.16, which is the build the last report from a real machine was made with.
 
 ## 0.11.0 - 2026-10-03
 

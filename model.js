@@ -83,6 +83,13 @@ function sdr2hdrCheckModel(m) {
       exported: typeof m.exported === 'string' ? m.exported : null,
       trainer: typeof m.trainer_version === 'string' ? m.trainer_version : null,
       params,
+      // For the Guided method (see lightLike in shader.js): written by HDR
+      // Trainer 0.5 and later.
+      guide: (() => {
+        const g = m.guide;
+        if (!g || !Number.isFinite(g.lo) || !Number.isFinite(g.hi) || !(g.hi - g.lo > 0.02)) return null;
+        return { lo: g.lo, hi: g.hi, agreement: Number.isFinite(g.agreement) ? g.agreement : null };
+      })(),
     },
   };
 }
@@ -363,6 +370,7 @@ async function sdr2hdrBuildModel(device, sampler, json) {
       const prepUniform = uniform([W, H, 0, 0], [1, 1, 0, 0]);
       const fitNow = new Float32Array([1, 1]);
       let prepSrc = null, prepBind = null;
+      const prepBinds = new Map();
       const passes = [
         conv('e1', a0, a1, W, H, 3, w1, h1, c1, 2, 1),
         conv('e2', a1, a2, w1, h1, c1, w2, h2, c2, 2, 1),
@@ -399,9 +407,15 @@ async function sdr2hdrBuildModel(device, sampler, json) {
           if (src) {
             // The frame texture only changes when the video's size does, so
             // its bind group is kept from one frame to the next.
+            // (One for each of the few frame textures a video goes round.)
             if (prepSrc !== src) {
               prepSrc = src;
-              prepBind = group(pipes.prep, [prepUniform, sampler, src, a0]);
+              prepBind = prepBinds.get(src);
+              if (!prepBind) {
+                if (prepBinds.size >= 8) prepBinds.clear();
+                prepBind = group(pipes.prep, [prepUniform, sampler, src, a0]);
+                prepBinds.set(src, prepBind);
+              }
             }
             pass.setPipeline(pipes.prep);
             pass.setBindGroup(0, prepBind);

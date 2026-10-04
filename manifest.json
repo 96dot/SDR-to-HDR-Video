@@ -1,7 +1,7 @@
 {
   "manifest_version": 3,
   "name": "Headroom HDR",
-  "version": "1.0",
+  "version": "1.2.2",
   "description": "Real-time SDR to HDR video on your GPU, using the brightness your display has to spare.",
   "minimum_chrome_version": "129",
   "icons": {
@@ -48,7 +48,7 @@
       "suggested_key": {
         "default": "Alt+Shift+M"
       },
-      "description": "Switch between the shader and the trained model"
+      "description": "Go round the methods: shader, guided, model"
     }
   },
   "web_accessible_resources": [
@@ -68,6 +68,7 @@
       ],
       "js": [
         "shader.js",
+        "upnet.js",
         "model.js",
         "diag.js",
         "pacer.js",

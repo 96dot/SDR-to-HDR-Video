@@ -33,7 +33,7 @@
   <main>
     <section class="card">
       <h1>Trained model</h1>
-      <p>A model made with HDR Trainer can decide how bright each part of the picture gets, in place of the built-in shader. Everything else (colour, sharpening, roll-off to your display) works the same either way.</p>
+      <p>A model made with HDR Trainer can guide the built-in shader: the shader still decides how much brighter highlights get, and the model decides where, telling lights from things that are merely white. That is the <b>Guided</b> method. The model can also do the whole job in the shader's place (<b>Your model</b>), which is truer to how films are graded and much tamer. Everything else (colour, sharpening, roll-off to your display) works the same either way.</p>
       <p>In HDR Trainer click <b>Export model</b>, then choose the file it wrote: <code>hdr-trainer/workspace/export/hdr-model.json</code>. The file stays on this computer.</p>
       <div class="buttons">
         <label class="btn primary"><input type="file" id="file" accept=".json,application/json">Choose model file</label>
@@ -49,9 +49,9 @@
 
     <section class="card">
       <h2 class="eyebrow">Comparing it with the shader</h2>
-      <p>In the popup, <b>Method</b> switches between the shader and the model. <span id="keyMethod"></span></p>
-      <p><b>Split</b> shows two pictures at once on a video, one each side of a line you can drag. Its two menus pick what each side shows: the original, the shader or the model. So you can put the shader against the model, or the model against the untouched original.</p>
-      <p>With the model in use, the Reach, Shaping and Colour lights sliders do nothing, because they tune the shader's own brightness decisions. Peak brightness becomes a ceiling the model's highlights ease into.</p>
+      <p>In the popup's settings, <b>Method</b> switches between the shader, the shader guided by the model, and the model. <span id="keyMethod"></span></p>
+      <p><b>Split</b> shows two pictures at once on a video, one each side of a line you can drag. Its two menus pick what each side shows: the original, the shader, the guided shader or the model. Loading a model sets it to the shader against the guided shader, which is the comparison that says whether the model is helping.</p>
+      <p>With Guided, every slider works as it does for the shader. With Your model, the Reach, Shaping and Colour lights sliders do nothing, because they tune the shader's own brightness decisions. Peak brightness becomes a ceiling the model's highlights ease into.</p>
     </section>
   </main>
   <script src="model.js"></script>

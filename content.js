@@ -7,15 +7,16 @@
 
   const DEFAULTS = { enabled: true, peak: 4, strength: 0.5, sat: 1.15, soften: 0.5, sharpen: 0.35, gamut: 0.5, vivid: 0.5,
     perf: 'auto',  // 'auto', 'best' or 'fast'
+    upscale: 'auto',  // 'auto', 'off', 'fast' or 'best': how a video smaller than the screen is made bigger (see Session.upChoice)
     poll: true,        // look at the video on every screen refresh and draw when its frame has changed, not only when the browser says so (see Session.pump)
     split: false, splitPos: 0.5, badge: true,
     stats: false,  // show live numbers in the badge, for diagnosing stutter
     hideOriginal: true,  // make the original video invisible while the overlay covers it (see syncHide)
     pace: true,          // have the browser hand each redraw to Windows a few ms into the screen refresh (see pacer.js)
     cue: 'ping',         // the sound that says when to wiggle the mouse during the A/B test, or 'off' (see cue.js)
-    method: 'shader',        // what decides the brightness: 'shader' or 'model' (a model from HDR Trainer)
+    method: 'shader',        // what decides the brightness: 'shader', 'model' (a model from HDR Trainer) or 'guided' (the shader, with the model saying where)
     splitLeft: 'original',   // what split view shows on each side of the line:
-    splitRight: 'shader',    // 'original', 'shader' or 'model'
+    splitRight: 'shader',    // 'original', 'shader', 'model' or 'guided'
     modelInfo: null,         // details of the loaded model; the model itself is stored under 'model'
     headroom: 0,   // display maximum from the calibration page; 0 = not calibrated
     sites: {},     // per-site overrides, keyed by hostname
@@ -38,6 +39,15 @@
   // takes, that decides from then on (see perfTick): on a Radeon RX 9070 XT
   // it is under a millisecond at 4K, and a slower GPU finds its own level.
   const PIXEL_BUDGET = 560e6;
+  // The 'best' upscaler is only worth its cost where the picture is made at
+  // least this much bigger (the files' own rule for mpv is the same).
+  const UP_BEST_FROM = 1.3;
+  // Guided method, for a model that doesn't say (see Session.draw).
+  const GUIDE_ROUGH = { lo: 0.15, hi: 0.9 };
+  // What this page has found out about the upscaling networks: { tier, load }
+  // = a video of this many pixels a second had to step down to this tier
+  // (see Session.upPlan and perfTick).
+  const upLearned = [];
   // The GPU taking longer than this to finish a frame means frames are
   // queuing up behind each other: it can't keep up.
   const BACKLOG_MS = 100;
@@ -126,6 +136,7 @@
   const EASE_DROPS = 4;
   const EASE_DWELL = 600;
   const EASE_MOUSE = 3500;
+  const EASE_MOUSE_MAX = 60000;     // ... but not for longer than this, once the decoder has been well throughout
   const EASE_GIVE_UP = 8000;
   const REST_MS = 150;
   const FMT = 'rgba16float';
@@ -248,12 +259,13 @@
         primitive: { topology: 'triangle-strip' },
       });
     };
-    const [copy, down1, down, scene, main] = await Promise.all([
+    const [copy, down1, down, scene, main, up] = await Promise.all([
       make(SDR2HDR_COPY, 'vsFull', SDR2HDR_FRAME_FORMAT),
       make(SDR2HDR_DOWN1, 'vsFull'),
       make(SDR2HDR_DOWN, 'vsFull'),
       make(SDR2HDR_SCENE, 'vsFull'),
       make(SDR2HDR_MAIN, 'vs'),
+      make(SDR2HDR_UP, 'vsFull', SDR2HDR_FRAME_FORMAT),
     ]);
     const sampler = device.createSampler({ magFilter: 'linear', minFilter: 'linear' });
 
@@ -263,7 +275,31 @@
       modelLoading = modelFailed = null;
       for (const s of [...sessions.values()]) s.destroy('the GPU device was lost');
     });
-    return { device, sampler, copy, down1, down, scene, main, name, canTime };
+    return { device, sampler, copy, down1, down, scene, main, up, name, canTime };
+  }
+
+  // ---- Upscaling network ----------------------------------------------------
+  //
+  // The 'best' upscaler's pipelines (see upnet.js), made the first time a
+  // video wants them and kept on the GPU (gpu.nets) for every video on the
+  // page. Until one is ready, and if it can't be made, 'fast' draws instead.
+  function ensureNet(gpu, key) {
+    const nets = gpu.nets || (gpu.nets = {});
+    if (nets[key]) return nets[key].ready ? nets[key] : null;
+    const net = nets[key] = { ready: false, failed: null };
+    const name = SDR2HDR_UPNETS.find((n) => n.key === key).name;
+    (async () => {
+      const got = await chrome.runtime.sendMessage({ type: 'sdr2hdr-upnet', key });
+      if (!got || !got.ok) throw new Error(got ? got.error : 'no answer from the extension');
+      Object.assign(net, await sdr2hdrBuildUpnet(gpu.device, got.text));
+      net.ready = true;
+      log(`upscaling network ready: ${name} (${net.passes.length} passes)`);
+      for (const s of sessions.values()) { s.needsDraw = true; s.layout(); }
+    })().catch((e) => {
+      net.failed = String(e.message || e);
+      log(`could not set up the upscaling network ${name}, using Fast instead:`, net.failed);
+    });
+    return null;
   }
 
   // ---- Trained model -------------------------------------------------------
@@ -277,7 +313,7 @@
   // What each side of the picture shows, as [left, right]. With split view
   // off both are the chosen method.
   const sidesWanted = () => (settings.split ? [settings.splitLeft, settings.splitRight] : [settings.method, settings.method]);
-  const modelWanted = () => !!settings.modelInfo && sidesWanted().includes('model');
+  const modelWanted = () => !!settings.modelInfo && sidesWanted().some((s) => s === 'model' || s === 'guided');
 
   async function ensureModel(gpu) {
     const info = settings.modelInfo;
@@ -758,7 +794,7 @@
       this.curvesView = this.curves.createView();
       this.updateBadge();
 
-      this.udata = new Float32Array(22);
+      this.udata = new Float32Array(24);
       this.sdata = new Float32Array(4);
       const ub = (data) => device.createBuffer({
         size: data.byteLength,
@@ -913,6 +949,7 @@
     // Auto-quality state, started afresh for every new video.
     resetAuto() {
       this.level = 0;           // index into LEVELS when perf is 'auto'
+      this.upTier = 0;          // which upscaling network 'best' means: index into SDR2HDR_UPNETS, past its end = none (see upChoice)
       this.bad = 0;             // consecutive measurement windows with too many drops
       this.holdUntil = 0;       // no judging until this time, after a level change
       this.baseline = null;     // { drop, fps } at full quality, before the first step down
@@ -958,14 +995,211 @@
       return LEVELS[this.effLevel()];
     }
 
+    // Upscaling: which way a video smaller than the screen is made bigger.
+    //
+    // Without it the picture is drawn with as many pixels as the video has
+    // and the browser stretches it over the screen, which is soft. With it
+    // the picture is drawn with as many pixels as the screen has, and a pass
+    // of our own (UP in shader.js) does the stretching with regard for edges.
+    //
+    // 'fast' is that pass. 'best' is a small trained network (FSRCNNX, as in
+    // mpv; see upnet.js), which costs many times more. Auto uses it and
+    // steps down if the GPU's timing says it is too much; Performance "Best
+    // quality" uses the bigger network whatever it costs.
+    // The network doubles the picture, so where it is drawn more than twice
+    // as big, 'fast' takes it the rest of the way.
+    //
+    // There are two sizes of the network. The bigger is used first; when the
+    // GPU says a frame's work is taking too much of a frame's time (perfTick,
+    // Performance on Auto only), the smaller, and then 'fast' (this.upTier).
+    //
+    // This is the choice before sizes are looked at: 'off' when the setting
+    // says so, when Performance is Fastest, when Auto has had to lower the
+    // quality because the GPU fell behind, or when the screen's worth of
+    // pixels at this frame rate is over Auto's pixel budget.
+    upChoice() {
+      const s = settings.upscale;
+      if (s === 'off' || settings.perf === 'fast' || !this.box) return 'off';
+      if (settings.perf === 'auto') {
+        if (this.level > 0) return 'off';
+        const [bw, bh] = this.backingSize(LEVELS[0], true);
+        if (bw * bh * (this.srcFps || 0) > PIXEL_BUDGET) return 'off';
+      }
+      if (s !== 'auto') return s;
+      if (settings.perf === 'best') return 'best';
+      // Auto goes for the best and lets the GPU's own timing say when that
+      // is too much (perfTick). Measured on a Radeon RX 9070 XT: the bigger
+      // network on 1080p at 60 frames a second, drawn at 4K, is 3.7 ms of
+      // the 16.7 a frame has. Where the GPU can't be asked for timings there
+      // is nothing to step down by, so there it is kept for video under 45
+      // frames a second, which has twice the time for each frame.
+      if (this.gpu.canTime) return 'best';
+      return this.srcFps > 0 && this.srcFps < 45 ? 'best' : 'fast';
+    }
+
+    // What the upscaling pass has to make for the frame about to be drawn:
+    // null when there is nothing to do (upscaling off, or the video already
+    // has as many pixels as it is drawn with), else the kind and the size.
+    upPlan() {
+      const want = this.upChoice();
+      if (want === 'off' || !this.slots) return null;
+      const c = this.canvas, t = this.slots[0].tex;
+      const max = this.gpu.device.limits.maxTextureDimension2D;
+      const w = Math.min(max, Math.round(c.width * this.scale[0]));
+      const h = Math.min(max, Math.round(c.height * this.scale[1]));
+      if (w < t.width * 1.1 && h < t.height * 1.1) return null;
+      // A frame that was copied smaller than the video, for a canvas that has
+      // since grown: it is drawn once more as it is, and the next frame is
+      // copied at full size. Upscaling it would mean making the network's
+      // textures for one frame of the wrong size.
+      if (t.width < Math.min(max, this.video.videoWidth) && t.height < Math.min(max, this.video.videoHeight)) return null;
+      const plan = { want, kind: 'fast', w, h, net: null, stretch: true, why: '' };
+      if (want !== 'best') return plan;
+      if (Math.max(w / t.width, h / t.height) < UP_BEST_FROM) { plan.why = 'the picture is made less than 1.3 times bigger'; return plan; }
+      if (t.width * 2 > max || t.height * 2 > max) { plan.why = 'the doubled picture would be too big for the GPU'; return plan; }
+      // Performance "Best quality" means the bigger network, whatever it costs.
+      // Otherwise the one this video has been stepped down to, or the one an
+      // earlier video on this page at least as heavy was (upLearned), so the
+      // next video doesn't start with the same stutter.
+      const load = t.width * t.height * (this.srcFps || 60);
+      const tier = Math.max(this.upTier, ...upLearned.filter((l) => load >= l.load * 0.95).map((l) => l.tier));
+      const which = SDR2HDR_UPNETS[settings.perf === 'best' ? 0 : tier];
+      if (!which) { plan.why = 'the network took the GPU too long'; return plan; }
+      const net = ensureNet(this.gpu, which.key);
+      if (!net) {
+        const n = this.gpu.nets[which.key];
+        plan.why = n.failed ? `the network could not be set up: ${n.failed}` : 'the network is still being set up';
+        return plan;
+      }
+      plan.kind = 'best';
+      plan.net = net;
+      plan.name = which.name;
+      plan.key = which.key;
+      // Doubled is enough, or more than enough (the main pass shrinks it)?
+      // Then there is no second step.
+      plan.stretch = w > t.width * 2.2 || h > t.height * 2.2;
+      return plan;
+    }
+
+    // The network's textures for this video: one for each thing a pass
+    // saves, the size of the frame, and one twice that for the result.
+    ensureNN(plan) {
+      const t = this.slots[0].tex, g = this.gpu;
+      if (this.nn && this.nn.net === plan.net && this.nn.w === t.width && this.nn.h === t.height) return this.nn;
+      this.dropNN();
+      const usage = GPUTextureUsage.RENDER_ATTACHMENT | GPUTextureUsage.TEXTURE_BINDING;
+      const tex = {};
+      for (const n of plan.net.names) {
+        const x = g.device.createTexture({ size: [t.width, t.height], format: SDR2HDR_UPNET_FORMAT, usage });
+        tex[n] = { tex: x, view: x.createView() };
+      }
+      const big = g.device.createTexture({ size: [t.width * 2, t.height * 2], format: SDR2HDR_FRAME_FORMAT, usage });
+      const view = big.createView();
+      this.nn = {
+        net: plan.net, w: t.width, h: t.height, tex, big, view,
+        bgMain: [0, 1].map((i) => this.group(g.main, [
+          { buffer: this.ubuf }, g.sampler, view, ...this.lv, this.sv[i], this.curvesView,
+        ])),
+        bgUp: this.group(g.up, [view]),
+        groups: new Map(),      // for each frame slot, the bind groups of the passes
+      };
+      return this.nn;
+    }
+
+    // The network's passes for the frame in this slot, into nn.big.
+    encodeNN(pass, sl) {
+      const nn = this.nn, net = nn.net, g = this.gpu;
+      let bg = nn.groups.get(sl);
+      if (!bg) {
+        const view = (n) => (n === 'LUMA' ? sl.view : nn.tex[n].view);
+        bg = {
+          passes: net.passes.map((p) => this.group(p.pipeline, p.bind.map(view))),
+          out: this.group(net.out, [g.sampler, sl.view, nn.tex[net.last].view]),
+        };
+        nn.groups.set(sl, bg);
+      }
+      net.passes.forEach((p, i) => pass(nn.tex[p.save].view, p.pipeline, bg.passes[i]));
+      pass(nn.view, net.out, bg.out);
+    }
+
+    dropNN() {
+      if (!this.nn) return;
+      for (const n in this.nn.tex) this.nn.tex[n].tex.destroy();
+      this.nn.big.destroy();
+      this.nn = null;
+    }
+
+    // The texture the upscaled frame goes into, made when first needed and
+    // remade when its size changes. There is one, not one per waiting frame:
+    // a frame is upscaled as it is drawn.
+    ensureUp(plan) {
+      if (this.up && this.up.tex.width === plan.w && this.up.tex.height === plan.h) return this.up;
+      this.dropUp();
+      const g = this.gpu;
+      const tex = g.device.createTexture({
+        size: [plan.w, plan.h], format: SDR2HDR_FRAME_FORMAT,
+        usage: GPUTextureUsage.RENDER_ATTACHMENT | GPUTextureUsage.TEXTURE_BINDING,
+      });
+      const view = tex.createView();
+      this.up = {
+        tex, view,
+        bgMain: [0, 1].map((i) => this.group(g.main, [
+          { buffer: this.ubuf }, g.sampler, view, ...this.lv, this.sv[i], this.curvesView,
+        ])),
+      };
+      return this.up;
+    }
+
+    dropUp() {
+      if (this.up) this.up.tex.destroy();
+      this.up = null;
+    }
+
+    // Everything the upscaling for this frame needs, and the texture the
+    // main pass is to read: { plan, src: { bgMain, w, h }, run(pass, sl) },
+    // or null when the frame is drawn as it is.
+    upSetup() {
+      const plan = this.upPlan();
+      if (!plan) { this.dropUp(); this.dropNN(); return null; }
+      const nn = plan.kind === 'best' ? this.ensureNN(plan) : (this.dropNN(), null);
+      const up = plan.stretch ? this.ensureUp(plan) : (this.dropUp(), null);
+      const src = up ? { bgMain: up.bgMain, w: plan.w, h: plan.h } : { bgMain: nn.bgMain, w: nn.w * 2, h: nn.h * 2 };
+      const run = (pass, sl) => {
+        if (nn) this.encodeNN(pass, sl);
+        if (up) pass(up.view, this.gpu.up, nn ? nn.bgUp : sl.bgUp);
+      };
+      return { plan, src, run };
+    }
+
+    // For the badge (with Stats on): which upscaler is drawing right now.
+    upWord() {
+      const now = this.upNow;
+      if (!now) return this.upChoice() === 'off' ? 'off' : 'not needed';
+      if (now.kind === 'best') return `Best (${now.name})${now.stretch ? ' + Fast' : ''}`;
+      return now.want === 'best' ? 'Fast (Best not in use)' : 'Fast';
+    }
+
+    // For the report and the popup.
+    upLine() {
+      const want = this.upChoice(), now = this.upNow;
+      if (settings.upscale === 'off') return 'off';
+      if (want === 'off') {
+        return settings.perf === 'fast' ? 'off (Performance is Fastest)'
+          : (this.level > 0 ? 'off (the GPU fell behind, so Auto lowered the quality)' : 'off (over the pixel budget at this frame rate)');
+      }
+      if (!now) return `${want}, not in use (the video has as many pixels as it is drawn with)`;
+      if (now.kind === 'best') return `best (${now.name}), ${now.from} to ${now.mid}${now.stretch ? `, then fast to ${now.w}x${now.h}` : (now.mid !== `${now.w}x${now.h}` ? `, drawn at ${now.w}x${now.h}` : '')}`;
+      return `fast${now.want === 'best' ? ` (not best: ${now.why})` : ''}, ${now.from} to ${now.w}x${now.h}`;
+    }
+
     // Canvas backing size, in real pixels, for a given quality level.
-    backingSize(q) {
+    backingSize(q, up = this.upChoice() !== 'off') {
       const { w, h, sx, sy } = this.box;
       const v = this.video;
       const dpr = window.devicePixelRatio || 1;
       const bw = w * dpr, bh = h * dpr;
       let k = Math.min(1, q.maxDim / Math.max(bw, bh));
-      if (settings.perf !== 'best') {
+      if (settings.perf !== 'best' && !up) {
         // No point drawing the picture with more pixels than the video has:
         // a 1080p video on a 4K screen is drawn at 1080p and scaled up by the
         // browser, which looks the same for a quarter of the work. This is
@@ -983,7 +1217,8 @@
     nextLevel() {
       const c = this.canvas, now = this.effLevel();
       for (let l = now + 1; l < LEVELS.length; l++) {
-        const [bw, bh] = this.backingSize(LEVELS[l]);
+        // Sized without upscaling: any level below the top one switches it off (upChoice).
+        const [bw, bh] = this.backingSize(LEVELS[l], false);
         if (LEVELS[l].lite !== LEVELS[now].lite || bw * bh < c.width * c.height * 0.9) return l;
       }
       return -1;
@@ -1006,6 +1241,31 @@
       const backlog = w.gpu > BACKLOG_MS;
       if (drop < 0.03 && !backlog) this.limited = false;
       if (settings.perf !== 'auto' || this.autoDone || !this.box || t < this.holdUntil) return;
+      // The upscaling network is the first thing to go, its smaller size
+      // and then none (see upChoice), and it goes before anything else is
+      // looked at: the GPU's timing of a frame means the same whether or not
+      // frames are being let go by for the decoder, and the decoder shares
+      // the GPU with it. (1.1.2 on a Radeon RX 9070 XT, 1440p at 60: the
+      // bigger network took 9.2 ms a frame, and this waited 28 seconds behind
+      // the easing below before saying so.) It goes at four tenths of a
+      // frame's time, not the half that lowers the quality level.
+      {
+        const frameMs = 1000 / (this.srcFps || 60);
+        const work = this.gpuWork();
+        if (this.upNow && this.upNow.kind === 'best' && work > 0.4 * frameMs) {
+          const sl = this.slots && this.slots[0].tex;
+          const key = this.upNow.key;
+          this.upTier = SDR2HDR_UPNETS.findIndex((n) => n.key === key) + 1;
+          if (sl) upLearned.push({ tier: this.upTier, load: sl.width * sl.height * (this.srcFps || 60) });
+          this.holdUntil = t + 6000;
+          this.recentWork.length = 0;
+          this.bad = 0;
+          const to = SDR2HDR_UPNETS[this.upTier];
+          log(`a frame's work takes the GPU ${work.toFixed(1)} ms with the upscaling network ${this.upNow.name}; ${to ? `trying ${to.name}` : 'using Fast upscaling instead'}`);
+          this.needsDraw = true;
+          return;
+        }
+      }
       // Frames let go by for the decoder's sake (see EASE_SLOW) are not a sign
       // of anything, and nor are the moments either side of that.
       if (this.ease.half || t - this.ease.fullAt < 4000) { this.bad = 0; return; }
@@ -1078,7 +1338,7 @@
     sides() {
       const m = this.gpu.model;
       const ready = !!m && !m.destroyed && !!settings.modelInfo && this.noRun !== m;
-      return sidesWanted().map((s) => (s === 'original' ? 0 : (s === 'model' && ready ? 2 : 1)));
+      return sidesWanted().map((s) => (s === 'original' ? 0 : (s === 'model' && ready ? 2 : (s === 'guided' && ready ? 3 : 1))));
     }
 
     // Get the model's working memory for this video ready (see model.js).
@@ -1115,8 +1375,8 @@
     badgeText() {
       const [l, r] = this.sides();
       const name = settings.split
-        ? `${['ORIGINAL', 'SHADER', 'MODEL'][l]} | ${['ORIGINAL', 'SHADER', 'MODEL'][r]}`
-        : (r === 2 ? 'HDR \u00b7 MODEL' : 'HDR');
+        ? `${['ORIGINAL', 'SHADER', 'MODEL', 'GUIDED'][l]} | ${['ORIGINAL', 'SHADER', 'MODEL', 'GUIDED'][r]}`
+        : (r === 2 ? 'HDR \u00b7 MODEL' : (r === 3 ? 'HDR \u00b7 GUIDED' : 'HDR'));
       if (!settings.stats) return name;
       const st = this.stats, c = this.canvas;
       const parts = [selfTest ? `SELF-TEST (${selfTest.phase}) \u00b7 ${name}` : name];
@@ -1125,7 +1385,7 @@
       } else {
         parts.push(this.video.paused ? 'paused' : 'measuring');
       }
-      parts.push(`${c.width}x${c.height}`, `drawing: ${drawMode()}${this.ease && this.ease.half ? ', every other frame' : ''}${paceHere ? `, pacing ${paceState(this)}${abOn ? ' (A/B test)' : ''}` : ''}`, `original ${hideMode() === 'off' ? 'shown' : hideMode()}`);
+      parts.push(`${c.width}x${c.height}`, `upscale: ${this.upWord()}`, `drawing: ${drawMode()}${this.ease && this.ease.half ? ', every other frame' : ''}${paceHere ? `, pacing ${paceState(this)}${abOn ? ' (A/B test)' : ''}` : ''}`, `original ${hideMode() === 'off' ? 'shown' : hideMode()}`);
       return parts.join(' \u00b7 ');
     }
 
@@ -1288,6 +1548,7 @@
       const h = Math.min(max, Math.max(16, Math.round(v.videoHeight * k)));
       if (this.slots && this.slots[0].tex.width === w && this.slots[0].tex.height === h) return;
       for (const sl of this.slots || []) sl.tex.destroy();
+      this.dropNN();          // its bind groups are of the old frames
       const g = this.gpu;
       // Three, so that a frame can be on screen, another waiting its turn,
       // and a third being copied in (see check and presentNext).
@@ -1302,6 +1563,7 @@
           // The passes that read it. The main pass has two versions, one for
           // each of the two scene textures it alternates between.
           bgDown1: this.group(g.down1, [g.sampler, view]),
+          bgUp: this.group(g.up, [view]),
           bgMain: [0, 1].map((i) => this.group(g.main, [
             { buffer: this.ubuf }, g.sampler, view, ...this.lv, this.sv[i], this.curvesView,
           ])),
@@ -1611,7 +1873,12 @@
       // made a copy wait 136 ms, the GPU thread showed nothing stuck and the
       // decoder was at its usual pace, and the guess cost 7.8 s at half rate.)
       const asked = !paceError && SDR2HDR_PACER.asking();
-      const stuck = asked ? direct : (waiting || early);
+      // Where it is not being asked (not Windows, or a screen much faster than
+      // the video), the same thing applies and there is nobody to say
+      // otherwise, so the guesses are not acted on in the second and a half
+      // after a fullscreen change.
+      const resizing = t - this.hitches.evAt < 1500 && this.hitches.evName === 'fullscreen';
+      const stuck = asked ? direct : ((waiting || early) && !resizing);
       if (direct && e.half) e.sawStuck = true;
       const unwell = !settling && (dropping || slow || stuck);
       const bad = e.half ? unwell : (trouble || stuck);
@@ -1707,6 +1974,10 @@
       // the player's controls.)
       const calm = t - lastPointer > EASE_MOUSE || (asked && !e.sawStuck);
       if (!bad && calm && t - e.okSince >= e.dwell) { leave(true); return; }
+      // The mouse can keep moving for as long as someone is reading the page
+      // under the video, and half rate was waiting on it without limit. Well
+      // for a whole minute is well: go back, and come here again if not.
+      if (!bad && t - e.okSince >= EASE_MOUSE_MAX) { leave(true); return; }
       if (bad && !e.okSeen && t - e.at > 1000 && !e.rested) {
         // Not better after a second: give it a moment with nothing asked of it.
         e.rested = e.now.rested = true;
@@ -1759,7 +2030,7 @@
       const wasReset = this.reset;
       this.reset = false;
       let [left, right] = this.sides();
-      let mode = left === 2 || right === 2;     // the model is on screen somewhere
+      let mode = left >= 2 || right >= 2;       // the model is on screen somewhere, on its own or as the shader's guide
       if (mode && !this.prepareRun()) {
         [left, right] = this.sides();           // now says shader wherever it said model
         mode = false;
@@ -1785,6 +2056,20 @@
       // screen pixels when it's being shrunk.
       u[12] = Math.max(u[2], 1 / (this.canvas.width * this.scale[0]));
       u[13] = Math.max(u[3], 1 / (this.canvas.height * this.scale[1]));
+      // Upscaling (see upChoice): the main pass then reads a frame of the
+      // size it draws, so one pixel of that is the sharpening step.
+      const big = this.upSetup();
+      this.upNow = big && {
+        want: big.plan.want, kind: big.plan.kind, name: big.plan.name, key: big.plan.key, why: big.plan.why, stretch: big.plan.stretch,
+        w: big.plan.w, h: big.plan.h, from: `${sl.tex.width}x${sl.tex.height}`, mid: `${sl.tex.width * 2}x${sl.tex.height * 2}`,
+      };
+      // The badge names the upscaler, so it is told when that changes.
+      const word = settings.stats ? this.upWord() : '';
+      if (word !== this.upWordWas) { this.upWordWas = word; if (word) this.updateBadge(); }
+      if (big) {
+        u[12] = Math.max(1 / big.src.w, 1 / (this.canvas.width * this.scale[0]));
+        u[13] = Math.max(1 / big.src.h, 1 / (this.canvas.height * this.scale[1]));
+      }
       u[14] = settings.sharpen;
       u[15] = settings.gamut;
       u[16] = settings.vivid;
@@ -1794,6 +2079,12 @@
       const fit = sdr2hdrModelFit(v.videoWidth, v.videoHeight);
       u[20] = fit[0];
       u[21] = fit[1];
+      // Guided: the levels of the model's gain that count as "not a light"
+      // and "a light" (see lightLike in shader.js). HDR Trainer measures them
+      // for the model; for a model exported before it did, rough ones.
+      const guide = (mode && this.gpu.model && this.gpu.model.info.guide) || GUIDE_ROUGH;
+      u[22] = guide.lo;
+      u[23] = guide.hi;
       device.queue.writeBuffer(this.ubuf, 0, u);
 
       const enc = device.createCommandEncoder();
@@ -1832,7 +2123,8 @@
       for (let i = 0; i < this.bgDown.length; i++) pass(this.lv[i + 1], g.down, this.bgDown[i]);
       pass(this.sv[1 - this.si], g.scene, this.bgScene[this.si]);
       this.si = 1 - this.si;
-      pass(this.ctx.getCurrentTexture().createView(), g.main, sl.bgMain[this.si], tq && { querySet: tq.set, endOfPassWriteIndex: 1 });
+      if (big) big.run(pass, sl);
+      pass(this.ctx.getCurrentTexture().createView(), g.main, (big ? big.src : sl).bgMain[this.si], tq && { querySet: tq.set, endOfPassWriteIndex: 1 });
       let readback = null;
       if (tq) {
         readback = tq.free.pop() || device.createBuffer({ size: 16, usage: GPUBufferUsage.MAP_READ | GPUBufferUsage.COPY_DST });
@@ -1894,7 +2186,7 @@
           (settings.perf === 'auto'
             ? `, auto level ${this.effLevel()} (budget allows ${this.budgetLevel()})${this.busy ? ' (busy page)' : ''}${this.limited ? ' (frames lost outside the GPU)' : ''}`
             : `, performance fixed at ${settings.perf}`) +
-          `, video frame rate ${this.srcFps ? this.srcFps.toFixed(1) : 'not known yet'}` +
+          `, video frame rate ${this.srcFps ? this.srcFps.toFixed(1) : 'not known yet'}, upscaling ${this.upLine()}` +
           `, original ${this.hidden ? this.hidden.mode : 'visible'}, GPU: ${this.gpu.name}, measuring began ${(this.born / 1000).toFixed(0)} s after the page loaded`,
         ...this.rows(),
         ...this.easeLines(),
@@ -1981,6 +2273,8 @@
       try { this.ctx.unconfigure(); } catch {}
       this.dropRun();
       for (const sl of this.slots || []) sl.tex.destroy();
+      this.dropUp();
+      this.dropNN();
       for (const t of this.textures || []) t.destroy();
       for (const b of [this.ubuf, this.sbuf]) if (b) b.destroy();
       if (this.tq) {
@@ -2093,7 +2387,24 @@
     try { chrome.storage.local.set({ diagRuns: [...carried, ...mine].slice(-8) }); } catch {}
   }
 
-  window.addEventListener('pagehide', () => saveRuns(true));
+  window.addEventListener('pagehide', () => { saveRuns(true); if (selfTest) selfTestStop('abandoned: the page was closed'); });
+  // A self-test that never got to put its settings back (the browser was
+  // closed, or crashed): its first half-minute has converting switched off
+  // for every site, and that must not be how things are left. Anything still
+  // switched off 40 seconds after a self-test began was abandoned.
+  if (window === top) {
+    try {
+      chrome.storage.local.get({ selfTestWas: null, enabled: true }, (g) => {
+        const w = g && g.selfTestWas;
+        if (!w || selfTest) return;
+        const age = Date.now() - (w.at || 0);
+        if ((g.enabled === false && age > 40000) || age > 300000) {
+          chrome.storage.local.set({ enabled: w.enabled !== false, stats: !!w.stats });
+          chrome.storage.local.remove('selfTestWas');
+        }
+      });
+    } catch (e) {}
+  }
   document.addEventListener('visibilitychange', () => { if (document.hidden) saveRuns(true); });
 
   // Whether the browser decodes 4K 60 on the graphics card or on the
@@ -2173,14 +2484,14 @@
   const hideMode = () => (settings.hideOriginal ? 'invisible' : 'off');
   // With Stats on, Alt+Shift+O switches it without leaving fullscreen.
   window.addEventListener('keydown', (e) => {
-    if (!settings.stats || !e.altKey || !e.shiftKey || e.code !== 'KeyO' || e.repeat) return;
+    if (!e.isTrusted || !settings.stats || !e.altKey || !e.shiftKey || e.code !== 'KeyO' || e.repeat) return;
     e.preventDefault();
     e.stopImmediatePropagation();
     try { chrome.storage.local.set({ hideOriginal: !settings.hideOriginal }); } catch {}
   }, true);
   // ... and Alt+Shift+P switches checking on every refresh.
   window.addEventListener('keydown', (e) => {
-    if (!settings.stats || !e.altKey || !e.shiftKey || e.code !== 'KeyP' || e.repeat) return;
+    if (!e.isTrusted || !settings.stats || !e.altKey || !e.shiftKey || e.code !== 'KeyP' || e.repeat) return;
     e.preventDefault();
     e.stopImmediatePropagation();
     try { chrome.storage.local.set({ poll: !settings.poll }); } catch {}
@@ -2271,10 +2582,16 @@
   const selfTestStop = (why) => {
     if (!selfTest) return;
     for (const t of selfTest.timers) clearTimeout(t);
+    const was = selfTest.was || { stats: true, enabled: true };
     selfTest = null;
     if (abOn) abSet(false);
-    try { chrome.storage.local.set({ enabled: true }); } catch (e) {}
-    note(`self-test ${why}`);
+    // Finished: Stats stays on, because the report it was all for is deeper
+    // with it on and has yet to be copied. Stopped or abandoned: as it was.
+    try {
+      chrome.storage.local.set(why === 'finished' ? { enabled: was.enabled } : { enabled: was.enabled, stats: was.stats });
+      chrome.storage.local.remove('selfTestWas');
+    } catch (e) {}
+    note(`self-test ${why}${why === 'finished' && !was.stats ? '; Stats is left on for the report, switch it off in the settings when done' : ''}`);
     for (const s of sessions.values()) s.updateBadge();
   };
   const selfTestStart = () => {
@@ -2282,7 +2599,10 @@
     const at = (ms, f) => selfTest.timers.push(setTimeout(() => { if (selfTest) f(); }, ms));
     note('self-test started: 30 s with converting off, then six 30-second turns of the A/B test');
     try { SDR2HDR_CUE.wake(); SDR2HDR_CUE.play('double'); } catch (e) {}
-    try { chrome.storage.local.set({ stats: true, enabled: false }); } catch (e) {}
+    // What the two settings it changes were, kept in storage too, so that
+    // they can be put back even if this page is closed part-way (selfTestUndo).
+    selfTest.was = { stats: !!stored.stats, enabled: stored.enabled !== false };
+    try { chrome.storage.local.set({ stats: true, enabled: false, selfTestWas: { at: Date.now(), ...selfTest.was } }); } catch (e) {}
     at(10000, fakeWiggle);
     at(20000, fakeWiggle);
     at(30000, () => {
@@ -2301,14 +2621,17 @@
     });
   };
   window.addEventListener('keydown', (e) => {
-    if (!e.altKey || !e.shiftKey || e.repeat) return;
+    // Only keys the user pressed: a page can make up key events of its own,
+    // and these shortcuts change settings for every site.
+    if (!e.isTrusted || !e.altKey || !e.shiftKey || e.repeat) return;
     if (e.code === 'KeyT' && window === top) {
       e.preventDefault();
       e.stopImmediatePropagation();
       if (selfTest) selfTestStop('stopped by hand'); else selfTestStart();
       return;
     }
-    if (!settings.stats || e.code !== 'KeyA') return;
+    // (A test that is running can always be stopped, Stats on or not.)
+    if (e.code !== 'KeyA' || !(settings.stats || abOn)) return;
     e.preventDefault();
     e.stopImmediatePropagation();
     abSet(!abOn);
@@ -2402,6 +2725,7 @@
 
   function scanVideos() {
     const active = isActive();
+    for (const v of [...locked]) if (!v.isConnected) locked.delete(v);     // gone from the page: let it go
     for (const [v, s] of [...sessions]) {
       if (s.dead) { sessions.delete(v); continue; }
       const why = whyNot(v, false);
@@ -2409,6 +2733,10 @@
       // The page has taken the overlay off (some rebuild the player around
       // the video). Start again; the original is put back meanwhile.
       if (!s.canvas.isConnected) { s.destroy('the page removed the overlay'); continue; }
+      // The page has moved the video somewhere else and left the overlay
+      // behind, where it would go on drawing while the video sat invisible in
+      // its new place. Start again beside it.
+      if (s.canvas.parentNode !== v.parentNode) { s.destroy('the page moved the video'); continue; }
       s.layout();
       s.perfTick();
       // A video that has been drawing fine for a while gets a clean slate: an
@@ -2590,6 +2918,7 @@
         limited: settings.perf === 'auto' && s.limited,
         eased: !!(s.ease && s.ease.half),
         lite: s.quality().lite,
+        up: s.upNow ? { kind: s.upNow.kind, want: s.upNow.want, from: s.upNow.from, name: s.upNow.name, why: s.upNow.why } : null,
         paused: s.video.paused,
         gpu: s.gpu.name,
       });
@@ -2685,7 +3014,7 @@
       `machine: ${navigator.hardwareConcurrency || '?'} processor threads${navigator.deviceMemory ? `, ${navigator.deviceMemory} GB of memory or more` : ''}` +
         `, screen ${Math.round(screen.width * devicePixelRatio)}x${Math.round(screen.height * devicePixelRatio)} in real pixels, window ${Math.round(innerWidth * devicePixelRatio)}x${Math.round(innerHeight * devicePixelRatio)}`,
       `deep measuring (the Stats switch): ${settings.stats ? 'on' : 'off'}; ${SDR2HDR_DIAG.screenLine()}`,
-      `settings: performance ${settings.perf}, drawing ${drawMode()}, pacing ${settings.pace ? (paceHere ? 'on' : 'on (not used: only for Windows)') : 'off'}${abOn ? ' (A/B test running: on and off in turns)' : ''}, hide original ${hideMode()}, method ${settings.method}` +
+      `settings: performance ${settings.perf}, upscaling ${settings.upscale}, drawing ${drawMode()}, pacing ${settings.pace ? (paceHere ? 'on' : 'on (not used: only for Windows)') : 'off'}${abOn ? ' (A/B test running: on and off in turns)' : ''}, hide original ${hideMode()}, method ${settings.method}` +
         `${settings.split ? `, split ${settings.splitLeft}|${settings.splitRight}` : ''}, sharpness ${settings.sharpen}, peak ${settings.peak}` +
         `, model ${settings.modelInfo ? 'loaded' : 'none'}`,
       `browser: ${navigator.brave ? 'Brave. ' : ''}${navigator.userAgent}`,

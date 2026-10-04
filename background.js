@@ -4,10 +4,12 @@ const TOGGLES = { 'toggle-hdr': 'enabled', 'toggle-split': 'split' };
 
 chrome.commands.onCommand.addListener(async (command) => {
   if (command === 'toggle-method') {
-    // Flip between the shader and the trained model, if one is loaded.
+    // Go round the methods, if a trained model is loaded: the shader, the
+    // shader guided by the model, the model.
     const cur = await chrome.storage.local.get({ method: 'shader', modelInfo: null });
     if (cur.modelInfo) {
-      const method = cur.method === 'model' ? 'shader' : 'model';
+      const round = ['shader', 'guided', 'model'];
+      const method = round[(round.indexOf(cur.method) + 1) % round.length];
       await chrome.storage.local.set({ method, splitRight: method });   // the split's right side follows the method
     }
     return;
@@ -27,11 +29,15 @@ chrome.commands.onCommand.addListener(async (command) => {
 
 const dnr = chrome.declarativeNetRequest;
 
-// One rule per page origin: "media loaded by pages of this origin may be read
-// by this origin, cookies included".
-async function ensureRule(origin) {
+// One rule per page origin and tab: "media loaded by pages of this origin in
+// this tab may be read by this origin, cookies included". Made one at a time,
+// so two videos asking at once can't be given the same rule number.
+let ruleQueue = Promise.resolve();
+const ensureRule = (origin, tabId) => (ruleQueue = ruleQueue.then(() => makeRule(origin, tabId), () => makeRule(origin, tabId)));
+const ruleOrigin = (r) => ((r.action.responseHeaders || []).find((h) => h.header === 'access-control-allow-origin') || {}).value || '';
+async function makeRule(origin, tabId) {
   const rules = await dnr.getSessionRules();
-  const mine = (r) => r.action.responseHeaders.some((h) => h.value === origin);
+  const mine = (r) => ruleOrigin(r) === origin && (r.condition.tabIds || []).includes(tabId);
   if (rules.some(mine)) return;
   const id = rules.reduce((m, r) => Math.max(m, r.id), 0) + 1;
   await dnr.updateSessionRules({
@@ -45,10 +51,25 @@ async function ensureRule(origin) {
           { header: 'access-control-allow-credentials', operation: 'set', value: 'true' },
         ],
       },
-      condition: { initiatorDomains: [new URL(origin).hostname], resourceTypes: ['media'] },
+      condition: { initiatorDomains: [new URL(origin).hostname], resourceTypes: ['media'], tabIds: [tabId] },
     }],
   });
 }
+
+// The text of one of the upscaling network's files (see upnet.js), for a page
+// that is about to use it. Only the two files there are can be asked for.
+const UPNET_FILES = {
+  x16: 'third_party/fsrcnnx/FSRCNNX_x2_16-0-4-1.glsl',
+  x8: 'third_party/fsrcnnx/FSRCNNX_x2_8-0-4-1.glsl',
+};
+chrome.runtime.onMessage.addListener((msg, sender, respond) => {
+  if (!msg || msg.type !== 'sdr2hdr-upnet' || !Object.hasOwn(UPNET_FILES, msg.key)) return;
+  fetch(chrome.runtime.getURL(UPNET_FILES[msg.key])).then((r) => {
+    if (!r.ok) throw new Error(`the file could not be read (${r.status})`);
+    return r.text();
+  }).then((text) => respond({ ok: true, text }), (e) => respond({ ok: false, error: String(e.message || e) }));
+  return true;   // the reply comes later
+});
 
 chrome.runtime.onMessage.addListener((msg, sender, respond) => {
   if (!msg || msg.type !== 'sdr2hdr-unlock') return;
@@ -58,17 +79,38 @@ chrome.runtime.onMessage.addListener((msg, sender, respond) => {
     const site = new URL(sender.tab.url).hostname;
     const { sites = {} } = await chrome.storage.local.get({ sites: {} });
     if (!(sites[site] && sites[site].unlock)) throw new Error('unlocking is not switched on for ' + site);
-    await ensureRule(sender.origin || new URL(sender.url).origin);
+    // And only for the site's own frames. A frame from somewhere else inside
+    // the page (an advert, an embed) is not what the user switched this on
+    // for: a rule for its origin would let that other site read media with
+    // the user's cookies.
+    const origin = sender.origin || new URL(sender.url).origin;
+    const host = new URL(origin).hostname;
+    if (host !== site && !host.endsWith('.' + site)) throw new Error(`this video is in a frame from ${host}, not from ${site}`);
+    await ensureRule(origin, sender.tab.id);
   })().then(() => respond({ ok: true }), (e) => respond({ ok: false, error: String(e.message || e) }));
   return true;   // the reply comes later
 });
 
-// Any change to the per-site settings: drop every rule. Sites still switched
-// on get theirs back the next time one of their videos needs it.
-chrome.storage.onChanged.addListener(async (changes, area) => {
+// A change to the per-site settings: drop the rules of sites that no longer
+// have unlocking switched on. The others stay, because a video that is
+// playing through one stops loading the moment its rule goes.
+chrome.storage.onChanged.addListener((changes, area) => {
   if (area !== 'local' || !changes.sites) return;
-  const rules = await dnr.getSessionRules();
-  if (rules.length) await dnr.updateSessionRules({ removeRuleIds: rules.map((r) => r.id) });
+  const sites = changes.sites.newValue || {};
+  const on = (host) => Object.keys(sites).some((s) => sites[s] && sites[s].unlock && (host === s || host.endsWith('.' + s)));
+  ruleQueue = ruleQueue.then(async () => {
+    const rules = await dnr.getSessionRules();
+    const gone = rules.filter((r) => { try { return !on(new URL(ruleOrigin(r)).hostname); } catch (e) { return true; } });
+    if (gone.length) await dnr.updateSessionRules({ removeRuleIds: gone.map((r) => r.id) });
+  }).catch(() => {});
+});
+// A closed tab's rules are of no more use.
+chrome.tabs.onRemoved.addListener((tabId) => {
+  ruleQueue = ruleQueue.then(async () => {
+    const rules = await dnr.getSessionRules();
+    const gone = rules.filter((r) => (r.condition.tabIds || []).includes(tabId));
+    if (gone.length) await dnr.updateSessionRules({ removeRuleIds: gone.map((r) => r.id) });
+  }).catch(() => {});
 });
 
 // The toolbar uses the same glass icon as the popup, coloured for the saved
@@ -81,12 +123,16 @@ const ICON_PALETTES = {
   rose: [[255, 143, 192], [192, 107, 255]],
   aurora: [[168, 146, 238], [242, 154, 198]],
 };
-const iconTheme = (name) => Object.hasOwn(ICON_PALETTES, name) ? name : 'amber';
+const iconTheme = (name) => (name === 'custom' || Object.hasOwn(ICON_PALETTES, name) ? name : 'amber');
+// The Custom theme's two colours (see theme.js).
+let iconCustom = [[124, 240, 192], [77, 124, 255]];
+const iconHex = (h) => { const m = /^#?([0-9a-f]{6})$/i.exec(h || ''); if (!m) return null; const n = parseInt(m[1], 16); return [n >> 16, (n >> 8) & 255, n & 255]; };
+const setIconCustom = (c) => { if (Array.isArray(c) && c.length === 2 && iconHex(c[0]) && iconHex(c[1])) iconCustom = [iconHex(c[0]), iconHex(c[1])]; };
 let iconBitmap = null;
 const iconVariants = new Map();
 
 function colourIcon(image, name) {
-  const [a, b] = ICON_PALETTES[name];
+  const [a, b] = name === 'custom' ? iconCustom : ICON_PALETTES[name];
   const pixels = image.data;
   for (let i = 0; i < pixels.length; i += 4) {
     if (!pixels[i + 3]) continue;
@@ -111,7 +157,8 @@ function colourIcon(image, name) {
 }
 
 async function themedIcon(name) {
-  if (!iconVariants.has(name)) {
+  const key = name === 'custom' ? `custom:${iconCustom.join()}` : name;
+  if (!iconVariants.has(key)) {
     const variant = (async () => {
       if (!iconBitmap) {
         iconBitmap = fetch(chrome.runtime.getURL('icons/icon128.png'))
@@ -131,13 +178,14 @@ async function themedIcon(name) {
       }
       return images;
     })();
-    iconVariants.set(name, variant);
+    iconVariants.set(key, variant);
+    if (iconVariants.size > 12) iconVariants.delete(iconVariants.keys().next().value);
     variant.catch(() => {
-      iconVariants.delete(name);
+      iconVariants.delete(key);
       iconBitmap = null;
     });
   }
-  return iconVariants.get(name);
+  return iconVariants.get(key);
 }
 
 let wantedIconTheme = 'amber';
@@ -182,17 +230,26 @@ function chooseIconTheme(name) {
 async function restoreIconTheme() {
   const beforeRead = iconRevision;
   try {
-    const stored = await chrome.storage.local.get({ theme: 'amber' });
+    const stored = await chrome.storage.local.get({ theme: 'amber', themeColours: null });
+    setIconCustom(stored.themeColours);
     if (beforeRead === iconRevision) chooseIconTheme(stored.theme);
   } catch (e) {
     if (beforeRead === iconRevision) chooseIconTheme('amber');
   }
 }
 
-chrome.storage.onChanged.addListener((changes, area) => {
-  if (area === 'local' && changes.theme) chooseIconTheme(changes.theme.newValue);
+let iconRestored = Promise.resolve();
+chrome.storage.onChanged.addListener(async (changes, area) => {
+  if (area !== 'local' || !(changes.theme || changes.themeColours)) return;
+  if (changes.themeColours) setIconCustom(changes.themeColours.newValue);
+  if (changes.theme) { chooseIconTheme(changes.theme.newValue); return; }
+  // Only the colours changed, so the theme is whatever it was. If this event
+  // is what woke the worker, that isn't known yet: wait for the stored theme
+  // to be read first, or the icon would be redrawn as the default one.
+  await iconRestored;
+  chooseIconTheme(wantedIconTheme);
 });
-chrome.runtime.onInstalled.addListener(() => { void restoreIconTheme(); });
-chrome.runtime.onStartup.addListener(() => { void restoreIconTheme(); });
+chrome.runtime.onInstalled.addListener(() => { iconRestored = restoreIconTheme(); });
+chrome.runtime.onStartup.addListener(() => { iconRestored = restoreIconTheme(); });
 // A service worker can be stopped between events: restore on every new wake.
-void restoreIconTheme();
+iconRestored = restoreIconTheme();

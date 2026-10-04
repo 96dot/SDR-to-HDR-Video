@@ -21,6 +21,11 @@ function showInfo(info) {
   if (info.error != null && info.baseline) {
     rows.push(['Error removed', `${Math.round((1 - info.error / info.baseline) * 100)}% on held-back scenes, against plain SDR`]);
   }
+  rows.push(['As a guide for the shader', info.guide
+    ? (info.guide.agreement != null
+      ? `Its ordering of bright regions agrees with real HDR ${Math.round(info.guide.agreement * 100)}% (0% would be chance)`
+      : 'Measured by HDR Trainer')
+    : 'Not measured (export it again with HDR Trainer 0.5 or later); rough levels are used']);
   if (info.exported) rows.push(['Exported', info.exported]);
   if (info.params) rows.push(['Size', `${info.params.toLocaleString()} weights`]);
   for (const [k, v] of rows) {
@@ -43,10 +48,10 @@ $('file').addEventListener('change', async (e) => {
     const modelInfo = { ...checked.info, name: file.name, id: Date.now() };
     // Only what's needed to run it is kept.
     const model = { format: json.format, version: json.version, input: json.input, output: json.output, trained: json.trained,
-      exported: json.exported, trainer_version: json.trainer_version, layers: json.layers };
-    await chrome.storage.local.set({ model, modelInfo, method: 'model', splitRight: 'model' });
+      exported: json.exported, trainer_version: json.trainer_version, guide: json.guide, layers: json.layers };
+    await chrome.storage.local.set({ model, modelInfo, method: 'guided', splitLeft: 'shader', splitRight: 'guided' });
     showInfo(modelInfo);
-    say('Loaded, and switched on. Videos that are already playing pick it up within a second.');
+    say('Loaded, and switched on as the shader\'s guide. Videos that are already playing pick it up within a second.');
   } catch (err) {
     say(err.message || String(err), true);
   }
@@ -56,8 +61,8 @@ $('remove').addEventListener('click', async () => {
   const cur = await chrome.storage.local.get({ splitLeft: 'original', splitRight: 'shader' });
   await chrome.storage.local.set({
     modelInfo: null, method: 'shader',
-    splitLeft: cur.splitLeft === 'model' ? 'original' : cur.splitLeft,
-    splitRight: cur.splitRight === 'model' ? 'shader' : cur.splitRight,
+    splitLeft: ['model', 'guided'].includes(cur.splitLeft) ? 'original' : cur.splitLeft,
+    splitRight: ['model', 'guided'].includes(cur.splitRight) ? 'shader' : cur.splitRight,
   });
   await chrome.storage.local.remove('model');
   showInfo(null);

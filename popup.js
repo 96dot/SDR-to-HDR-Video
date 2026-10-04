@@ -1,10 +1,11 @@
 const DEFAULTS = {
   enabled: true, peak: 4, strength: 0.5, sat: 1.15, soften: 0.5, sharpen: 0.35, gamut: 0.5, vivid: 0.5,
-  perf: 'auto', poll: true,
+  perf: 'auto', upscale: 'auto', poll: true,
   split: false, splitPos: 0.5, badge: true, stats: false, hideOriginal: true, pace: true, cue: 'ping',
   method: 'shader', splitLeft: 'original', splitRight: 'shader', modelInfo: null,
   headroom: 0, sites: {},
 };
+const NEED_MODEL = ['guided', 'model'];     // methods that need a loaded model
 const PICTURE = ['peak', 'strength', 'soften', 'sat', 'gamut', 'vivid', 'sharpen'];
 const $ = (id) => document.getElementById(id);
 
@@ -46,19 +47,19 @@ function show() {
   const hasModel = !!state.modelInfo;
   $('split').checked = state.split;
   for (const k of ['splitLeft', 'splitRight']) {
-    $(k).querySelector('[value=model]').disabled = !hasModel;
-    $(k).value = state[k] === 'model' && !hasModel ? 'shader' : state[k];
+    for (const v of NEED_MODEL) $(k).querySelector(`[value=${v}]`).disabled = !hasModel;
+    $(k).value = NEED_MODEL.includes(state[k]) && !hasModel ? 'shader' : state[k];
   }
-  $('method').value = hasModel && state.method === 'model' ? 'model' : 'shader';
-  $('method').querySelector('[value=model]').disabled = !hasModel;
+  $('method').value = hasModel && NEED_MODEL.includes(state.method) ? state.method : 'shader';
+  for (const v of NEED_MODEL) $('method').querySelector(`[value=${v}]`).disabled = !hasModel;
   $('modelBtn').textContent = hasModel ? 'Change' : 'Load';
   $('methodRow').title = hasModel
-    ? `What decides how bright each part of the picture gets: the built-in shader, or your trained model (${describeModel(state.modelInfo)}).`
+    ? `What decides how bright each part of the picture gets. Shader: the built-in rules. Guided: the shader decides how much, and your trained model where, telling lights from things that are merely white. Your model: the model does it all, truer to a film grade and much tamer. (${describeModel(state.modelInfo)}.)`
     : 'What decides how bright each part of the picture gets. Click Load to add a model made with HDR Trainer.';
   // These three shape the shader's own brightness decisions, so they do
   // nothing while the model is making them.
   const shown = state.split ? [state.splitLeft, state.splitRight] : [state.method];
-  const modelOnly = hasModel && shown.includes('model') && !shown.includes('shader');
+  const modelOnly = hasModel && shown.includes('model') && !shown.includes('shader') && !shown.includes('guided');
   for (const k of ['strength', 'soften', 'vivid']) {
     $(k).closest('.slider').classList.toggle('unused', modelOnly);
   }
@@ -66,6 +67,7 @@ function show() {
   $('stats').checked = state.stats;
   $('hideOriginal').checked = state.hideOriginal;
   $('perf').value = state.perf;
+  $('upscale').value = state.upscale;
   $('poll').checked = state.poll;
   $('pace').checked = state.pace;
   $('cue').value = state.cue;
@@ -108,17 +110,36 @@ $('cog').addEventListener('click', () => {
 const markTheme = () => {
   const now = document.documentElement.dataset.theme || 'amber';
   for (const b of document.querySelectorAll('.swatch')) b.setAttribute('aria-pressed', String(b.dataset.theme === now));
+  $('customRow').hidden = now !== 'custom';
+  $('customA').value = customColours[0];
+  $('customB').value = customColours[1];
+  $('customSwatch').style.background = `linear-gradient(135deg, ${customColours[0]}, ${customColours[1]})`;
 };
+// The Custom theme's two colours: shown as they are picked, saved a moment after.
+let colourSave = 0, colourPending = null;
+const saveColours = () => { if (colourPending) { chrome.storage.local.set({ theme: 'custom', themeColours: colourPending }); colourPending = null; } };
+for (const id of ['customA', 'customB']) {
+  $(id).addEventListener('input', () => {
+    const c = [$('customA').value, $('customB').value];
+    applyTheme('custom', c);
+    $('customSwatch').style.background = `linear-gradient(135deg, ${c[0]}, ${c[1]})`;
+    clearTimeout(colourSave);
+    colourPending = c;
+    colourSave = setTimeout(saveColours, 250);
+  });
+}
+// The popup can be closed inside that moment: save at once if so.
+for (const ev of ['pagehide', 'blur']) addEventListener(ev, () => { clearTimeout(colourSave); saveColours(); });
 for (const b of document.querySelectorAll('.swatch')) {
   b.addEventListener('click', () => {
     applyTheme(b.dataset.theme);
     try { localStorage.setItem('theme', b.dataset.theme); } catch (e) {}
-    chrome.storage.local.set({ theme: b.dataset.theme });
+    chrome.storage.local.set(b.dataset.theme === 'custom' ? { theme: 'custom', themeColours: customColours } : { theme: b.dataset.theme });
     markTheme();
   });
 }
 markTheme();
-chrome.storage.local.get({ theme: 'amber' }, () => setTimeout(markTheme, 0));
+chrome.storage.local.get({ theme: 'amber' }, () => setTimeout(markTheme, 50));
 for (const k of ['enabled', 'badge', 'stats', 'split', 'hideOriginal', 'poll', 'pace']) {
   $(k).addEventListener('change', (e) => {
     state[k] = e.target.checked;
@@ -165,6 +186,11 @@ $('modelBtn').addEventListener('click', () => {
 $('perf').addEventListener('change', (e) => {
   state.perf = e.target.value;
   chrome.storage.local.set({ perf: state.perf });
+});
+
+$('upscale').addEventListener('change', (e) => {
+  state.upscale = e.target.value;
+  chrome.storage.local.set({ upscale: state.upscale });
 });
 
 // Changing the method also puts it on the right of the split, so the split
@@ -224,7 +250,7 @@ $('copyReport').addEventListener('click', async () => {
     try { await navigator.clipboard.writeText(r.text); label = 'Copied'; } catch { label = 'Failed'; }
   }
   btn.textContent = label;
-  setTimeout(() => { btn.textContent = 'Report'; }, 1800);
+  setTimeout(() => { btn.textContent = 'Copy report'; }, 1800);
 });
 
 $('calibrate').addEventListener('click', () => {
@@ -237,7 +263,7 @@ chrome.commands.getAll((cmds) => {
   const intro = {
     'toggle-hdr': 'Turn HDR conversion on or off.',
     'toggle-split': 'Split view: a different picture on each side of a line. Pick the two sides with the menus, and drag the line on the video to move it.',
-    'toggle-method': 'Switch between the shader and your trained model.',
+    'toggle-method': 'Go round the methods: the shader, the shader guided by your trained model, the model.',
   };
   for (const c of cmds) {
     if (!where[c.name]) continue;
@@ -286,11 +312,13 @@ async function pollStats() {
   // "1080p" style label: the short side for an upright video, else the height.
   const p = ([w, h]) => `${h > w ? w : h}p`;
   let text = `Converting ${p(s.video)}`;
-  const names = ['original', 'shader', 'model'];
+  const names = ['original', 'shader', 'model', 'guided'];
   if (s.split) text += `, ${names[s.sides[0]]} | ${names[s.sides[1]]}`;
   else if (s.sides[1] === 2) text += ' with your model';
+  else if (s.sides[1] === 3) text += ', guided by your model';
   if (s.modelFailed) text += " (model wouldn't load)";
   if (s.drawn[0] * s.drawn[1] < s.video[0] * s.video[1] * 0.9) text += ` at ${p(s.drawn)}`;
+  else if (s.up) text += `, upscaled to ${p(s.drawn)}`;
   if (s.paused) text += ', paused';
   else if (s.fps != null) text += `, ${Math.round(s.fps)} fps, ${Math.round(s.drop * 100)}% dropped`;
   if (s.busy) text += ' (busy page)';
@@ -300,6 +328,7 @@ async function pollStats() {
   $('statusText').textContent = text;
   $('status').title = `Video ${s.video.join('x')}, drawn at ${s.drawn.join('x')}` +
     (s.lite ? ', sharpening and debanding off' : '') +
+    (s.up ? `, upscaled from ${s.up.from} (${s.up.kind === 'best' ? s.up.name : `Fast${s.up.want === 'best' && s.up.why ? `, not Best: ${s.up.why}` : ''}`})` : '') +
     (s.gap != null ? `. Longest gap between frames: ${Math.round(s.gap)} ms` : '') +
     `. Drawing on every ${s.poll ? 'new frame, checked every screen refresh' : 'new frame the browser announces'}. GPU: ${s.gpu}.` +
     (s.busy ? ' Lowering quality did not reduce dropped frames, and the page is busy, so full quality was restored.' : '') +
