@@ -68,7 +68,7 @@ function show() {
   $('hideOriginal').checked = state.hideOriginal;
   $('perf').value = state.perf;
   $('upscale').value = state.upscale;
-  $('interp').value = state.interp;
+  $('interp').value = state.interp === 'on' ? 'on' : 'off';
   $('poll').checked = state.poll;
   $('pace').checked = state.pace;
   $('cue').value = state.cue;

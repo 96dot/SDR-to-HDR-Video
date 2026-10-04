@@ -2,6 +2,47 @@
 
 All notable changes to Headroom HDR (called SDR to HDR Video before 0.11). Versions follow the number in `manifest.json`.
 
+## 1.3.0 - 2026-10-04
+
+### Added
+
+- **Smooth motion** (frame interpolation), in the popup's main view, Off by default. For a video with fewer frames than the screen has refreshes (30, 25 or 24 frames a second on a 60 Hz screen, 30 on 120 or 144), the pictures between two frames are made up from the motion in the video, so every refresh shows something new.
+  - How: for each new frame the motion since the one before it is found on the GPU by block matching on small luminance copies (480x270, 120x68, 30x17, coarse to fine, with sub-pixel refinement). For each refresh in between, the picture is made from the two frames each slid part of the way along that motion, and blended. Where the two disagree (a wrong match, something uncovered), or the frame as a whole did not match (a cut), the nearer real frame is used as it is, so a failure looks like the old judder and not a smear. The made-up picture goes through the rest of drawing (analysis, upscaling, the HDR conversion, split view, a model) as if it were a video frame. See README, "Smooth motion", and `interp.js`.
+  - Timing: a steady clock of its own decides when each pair of frames begins, so the video moves the same amount every refresh at 24, 25 and 30 frames a second alike. Going by when frames happened to arrive moved it in uneven steps (they arrive on the grid of refreshes), which the first version did.
+  - What it costs: the picture runs one video frame behind the sound (about 33 ms at 30 frames a second); fast action, hair and moving text can smear or wobble; the GPU draws a picture every refresh, so a 30 fps video costs about what a 60 fps one does. Auto quality and the upscaler's step-down count the pictures drawn, not the video's frames.
+  - Safe by default: it needs Every refresh, is used only while the video's frame rate is well under the screen's refresh rate (a frame lasting at least 1.45 refreshes to come on, 1.3 to stay), and not while the decoder is falling behind. Before it is first used on a GPU it checks itself on a made-up pair of frames with a known motion; if the result is wrong it is not offered there. If working out the motion takes the GPU most of a frame's time (0.8 of it, over eight frames) it stops by itself and the report says why; switching it off and on again in the popup, or a new video in the same player, tries again.
+- **Diagnostics for it.** With Stats on, the report has a Smooth motion section: whether it is on, and if not why not; the frame rate and refresh rate; the picture's delay behind the sound; how many video frames and made-up pictures there have been since it came on; how many frames came more than 20 ms late, how many were skipped to catch up, how many times the clock had to start again, and how many gaps (seeks, stalls) it did not make up across; how long working out the motion takes the GPU; and the result of its self-check. The badge says whether it is on. **Alt+Shift+I** (with Stats on) goes round three views for judging it: the picture, the places where it fell back to the nearer real frame (in red), and the motion it found (colour for direction, strength for how far). The key works only from a real key press, like the other shortcuts, and saves nothing.
+- **`tests/`**, the start of automated checks, run with `node tests/schedule.test.mjs` (the timing logic against pretend screens of 60, 75, 120 and 144 Hz; no GPU) and `node tests/interp.test.mjs` (the real shaders on a software GPU, with made-up frames of known motion). `tests/README.md` says how. Not part of the extension.
+
+### Changed
+
+- The main view is 36 px taller with the new row (466 px, from 430); the settings view is as it was (567 px, 594 px with the Match or Custom row showing).
+- Auto quality, with Smooth motion on, counts the pictures drawn per second (the refresh rate) where it counted the video's frames, for the pixel budget and for how much of a frame's time the GPU's work may take.
+- While Smooth motion is on, the video's frame copies are four where they were three, and one more picture-sized texture holds the made-up picture. More GPU memory, by about two picture-sized textures.
+
+### Review
+
+This is the first update to go through the full checks (CLAUDE.md): three independent reviews (security, logic, readability), each finding checked against the code before it was acted on. Fixed because of them:
+
+- After giving up as too slow, switching Smooth motion off and on gave up again at once, on stale timings; the timings and counters now start afresh.
+- With a model (Guided or Model) at 24 or 25 frames a second, the model was not re-run for most frames, because the first picture of a pair was usually a made-up one; it is now.
+- A queue of more than one waiting frame (after a decoder hiccup) never drained, leaving the picture further behind the sound for good; the extra frames are now skipped.
+- Playback at other than normal speed was not taken into account in deciding whether to make pictures up, or in the size of the gap between frames.
+- The "on" state and the doubled picture count could go stale while paused or with Every refresh off, keeping Auto quality lower than needed.
+- The self-check could leak what it made if it failed part-way; the unused texture is freed when smooth motion stops; the test server only listens on this machine; counters, comments and docs that disagreed with the code (some of them about the earlier changes) corrected.
+
+### Found and not changed
+
+- Auto's choice of Best upscaling (for video under 45 frames a second) does not look at Smooth motion; the step-down by measured GPU time handles it (see above), but the first seconds may run the bigger network at the screen's rate.
+- The cut and fallback thresholds were set on made-up frames (motion gives a coarse mismatch of 0.04 to 0.05, cuts 0.105 and up). Real footage, with grain and lighting changes, may need them moved.
+- The time Smooth motion's GPU work takes is as seen from the page, so it includes waiting for the GPU's other work; its give-up check may be early on a GPU that is already busy with heavy 4K upscaling.
+- `docs/themes.png` still shows Rose (from 1.2.5).
+
+### Tested, and not
+
+- Checked here: the shaders on a software GPU with made-up frames (motion found within 0.1 to 0.5 px typically, the picture at the halfway point within 0.04 to 0.76% of the true one for motions from nothing to about 8% of the frame's width, a cut using the nearer frame exactly); the timing logic against pretend screens of 60, 75, 120 and 144 Hz and video of 30, 25, 24 and 23.976 frames a second, with late and dropped frames, a seek and a changed playback speed (video time advances the same amount every refresh); the whole feature running in the extension in headless Chromium (it turns on, passes its self-check, gives up with the reason when too slow, the key works from a real press and is ignored from a made-up one, the popup saves and reloads the setting and shows Off for a stored value it does not know); popup heights.
+- Not checked: **anything on real video, a real GPU or a real display.** The software GPU is far too slow to play video in real time, so the pacing between frames could only be checked in the timing logic and not live. How it looks (smearing, grain taken for motion), how fast it is, whether the one-frame delay is noticeable against speech, and how it behaves on 120 and 144 Hz screens are for you to judge.
+
 ## 1.2.6 - 2026-10-04
 
 Fixes from a review of the whole extension for logic, security and readability problems, each checked against the code before it was changed.

@@ -19,12 +19,13 @@ const check = (name, ok, detail) => { console.log(`${ok ? 'PASS' : 'FAIL'}  ${na
 // seconds. A frame turns up at the first refresh at or after its time. late:
 // { frameNumber: extra refreshes it is late by }; skip: frame numbers that
 // never turn up. Returns what was shown at each refresh, as the time in the
-// video of the picture, and what arrive() said for each frame.
+// video of the picture, and what start() said for each frame.
 function run({ hz, fps, seconds = 4, late = {}, skip = [], rate = 1, jumpAt = null, flowed = true }) {
   const s = new Sdr2hdrSchedule();
   const tick = 1000 / hz, frameMs = 1000 / fps;
   const shown = [], arrivals = [];
   const waiting = [];    // frames that have turned up and not yet begun their pair
+  let maxWaiting = 0;
   let next = 0;
   for (let r = 0; r * tick < seconds * 1000; r++) {
     const now = r * tick + 1000;
@@ -40,10 +41,11 @@ function run({ hz, fps, seconds = 4, late = {}, skip = [], rate = 1, jumpAt = nu
     if (waiting.length && s.due(now)) {
       const f = waiting.shift();
       arrivals.push({ r, n: f.n, ...s.start(now, f.ts, rate, frameMs, flowed) });
+      maxWaiting = Math.max(maxWaiting, waiting.length);
     }
     shown.push({ r, ...s.at(now) });
   }
-  return { shown, arrivals, s };
+  return { shown, arrivals, s, maxWaiting };
 }
 
 // 30 on 60: A, then the picture halfway, then B, and so on.
@@ -140,10 +142,11 @@ function smoothness(hz, fps, extra = {}) {
   check('playback rate 2: gaps are in real time', a && Math.abs(a.gap - 33.3) < 1, `gap ${a && a.gap.toFixed(1)} ms`);
 }
 
-// A video that is not slower than the screen can use it still: nothing breaks.
+// About as many frames as refreshes: nothing builds up waiting (a backlog would
+// never drain, because frames are taken one a gap).
 {
-  const { shown } = run({ hz: 60, fps: 59.94 });
-  check('about as many frames as refreshes: still gives one picture per refresh', shown.length > 0 && shown.every((x) => ['prev', 'mid', 'cur'].includes(x.kind)));
+  const { maxWaiting } = run({ hz: 60, fps: 59.94 });
+  check('about as many frames as refreshes: at most one frame ever waits', maxWaiting <= 1, `at most ${maxWaiting} waiting`);
 }
 
 if (failed) { console.log(`${failed} failed`); process.exit(1); }

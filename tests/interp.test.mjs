@@ -13,16 +13,16 @@ const chrome = process.env.CHROME || fs.readdirSync('/opt/pw-browsers').filter((
 const server = http.createServer((req, res) => {
   const f = path.join(root, decodeURIComponent(req.url.split('?')[0]));
   if (req.url === '/favicon.ico') { res.statusCode = 204; res.end(); return; }
-  if (!f.startsWith(root) || !fs.existsSync(f)) { res.statusCode = 404; res.end(); return; }
+  if (!f.startsWith(root + path.sep) || !fs.existsSync(f)) { res.statusCode = 404; res.end(); return; }
   res.setHeader('content-type', f.endsWith('.html') ? 'text/html' : 'text/javascript');
   res.end(fs.readFileSync(f));
-}).listen(0);
+}).listen(0, '127.0.0.1');
 const browser = await pw.chromium.launch({ executablePath: chrome, headless: true, args: ['--no-sandbox', '--enable-unsafe-webgpu', '--use-angle=swiftshader', '--enable-features=Vulkan', '--use-vulkan=swiftshader', '--ignore-gpu-blocklist'] });
 const page = await browser.newPage();
 const errors = [];
 page.on('pageerror', (e) => errors.push(e.message));
 page.on('console', (m) => { if (m.type() === 'error') errors.push(m.text()); });
-await page.goto(`http://localhost:${server.address().port}/tests/interp.html`);
+await page.goto(`http://127.0.0.1:${server.address().port}/tests/interp.html`);
 await page.evaluate(() => window.ready);
 
 let failed = 0;
@@ -43,9 +43,9 @@ for (const [name, mx, my] of cases) {
 // blend of the two.
 {
   const r = await page.evaluate(() => window.runSelfTest(0.37, 0.51, 0.3));
-  check('scene cut: the nearer frame is used, not a blend (t = 0.3)', r.errA < 0.02, `differs from the nearer frame by ${(r.errA * 100).toFixed(2)}%, from the other by ${(r.errB * 100).toFixed(2)}%`);
+  check('scene cut: the nearer frame is used, not a blend (t = 0.3)', r.errA < 0.02 && r.errB > 0.1, `differs from the nearer frame by ${(r.errA * 100).toFixed(2)}%, from the other by ${(r.errB * 100).toFixed(2)}%`);
   const q = await page.evaluate(() => window.runSelfTest(0.37, 0.51, 0.8));
-  check('scene cut: the nearer frame is used, not a blend (t = 0.8)', q.errB < 0.02, `differs from the nearer frame by ${(q.errB * 100).toFixed(2)}%, from the other by ${(q.errA * 100).toFixed(2)}%`);
+  check('scene cut: the nearer frame is used, not a blend (t = 0.8)', q.errB < 0.02 && q.errA > 0.1, `differs from the nearer frame by ${(q.errB * 100).toFixed(2)}%, from the other by ${(q.errA * 100).toFixed(2)}%`);
 }
 check('no page errors', errors.length === 0, errors.slice(0, 3).join(' | '));
 await browser.close();

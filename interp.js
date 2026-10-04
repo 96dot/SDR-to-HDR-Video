@@ -9,8 +9,8 @@
 //               passes the analysis uses (shader.js, DOWN1 and DOWN); only
 //               the luminance is used. The pyramid of A is kept from last time.
 //   2. FLOW     Block matching, coarse to fine. At 30x17 every shift up to 3
-//               texels either way is tried; at 120x68 and at 480x270 only
-//               shifts within 2 of what the level above found. The result is
+//               texels either way is tried; at 120x68 only shifts within 2
+//               of what the level above found, at 480x270 within 1. The result is
 //               for each pixel of B the shift F such that A(x + F) looks like
 //               B(x), in fractions of the frame (so every level agrees).
 //   3. MIX      For each refresh between the two frames, t going from 0 (A)
@@ -162,7 +162,7 @@ fn fs(in: VOut) -> @location(0) vec4f {
   let w = max(w0, smoothstep(0.07, 0.10, textureLoad(cut, vec2i(0, 0), 0).r));
   var o = mix(mix(a, b, pr.t), near, w);
   if (pr.dbg > 1.5) {
-    let m = f * vec2f(480.0, 270.0);
+    let m = f * vec2f(${SDR2HDR_FLOW_LEVELS[0][0]}.0, ${SDR2HDR_FLOW_LEVELS[0][1]}.0);
     let len = length(m);
     let ang = atan2(m.y, m.x) / 6.2831853 + 0.5;
     o = mix(o * 0.45, hue(ang), clamp(len / 6.0, 0.0, 1.0) * 0.8);
@@ -190,9 +190,8 @@ fn vnoise(p: vec2f) -> f32 {
 }
 @fragment
 fn fs(in: VOut) -> @location(0) vec4f {
-  // Position in pixels of a 512-wide frame, moved by the shift.
+  // Position in pixels of the frame, moved by the shift.
   let p = (in.uv - tc.shift) * tc.size;
-  
   let n = 0.4 * vnoise(p / 64.0) + 0.3 * vnoise(p / 24.0) + 0.2 * vnoise(p / 9.0) + 0.1 * vnoise(p / 3.0);
   // Pushed apart, so that there are real edges to follow (and to get wrong).
   let c = 0.075 + 0.85 * smoothstep(0.35, 0.65, n);
@@ -228,10 +227,11 @@ class Sdr2hdrMotion {
     this.pipes = pipes;
     const { device } = gpu;
     const usage = GPUTextureUsage.RENDER_ATTACHMENT | GPUTextureUsage.TEXTURE_BINDING | GPUTextureUsage.COPY_SRC;
-    const group0 = (pipeline, resources) => device.createBindGroup({
+    const group = (pipeline, resources) => device.createBindGroup({
       layout: pipeline.getBindGroupLayout(0),
       entries: resources.map((resource, binding) => ({ binding, resource })),
     });
+    this.group = group;
     const tex = ([w, h]) => device.createTexture({ size: [w, h], format: SDR2HDR_FLOW_FORMAT, usage });
     const mk = (size) => { const t = tex(size); return { tex: t, view: t.createView() }; };
     this.textures = [];
@@ -244,7 +244,7 @@ class Sdr2hdrMotion {
     // The one number that says whether the frame was a cut.
     this.cut = mk([1, 1]);
     this.textures.push(this.cut.tex);
-    this.bgCut = group0(pipes.cut, [this.flow[0].view]);
+    this.bgCut = group(pipes.cut, [this.flow[0].view]);
     // [window, search radius, subpixel, coarsest] for each level, coarse to fine.
     const settings = Sdr2hdrMotion.search;
     this.qbufs = settings.map((s) => {
@@ -252,11 +252,6 @@ class Sdr2hdrMotion {
       device.queue.writeBuffer(b, 0, new Int32Array(s));
       return b;
     });
-    const group = (pipeline, resources) => device.createBindGroup({
-      layout: pipeline.getBindGroupLayout(0),
-      entries: resources.map((resource, binding) => ({ binding, resource })),
-    });
-    this.group = group;
     // bgFlow[k][i]: matching level i (coarse to fine) with pyramid k as the
     // current frame and the other as the one before.
     this.bgFlow = [0, 1].map((k) => this.flow.map((_, i) => {
@@ -273,7 +268,6 @@ class Sdr2hdrMotion {
     this.mixGroups = new Map();
     this.k = 0;              // which pyramid holds the current frame
     this.valid = false;      // the other one holds the frame before it
-    this.dead = false;
   }
 
   pass(enc, view, pipeline, bind) {
@@ -288,14 +282,14 @@ class Sdr2hdrMotion {
 
   // A new current frame. Builds its pyramid, and if there is a frame before
   // it, the flow from one to the other. Returns true if the flow was made.
-  advance(enc, sl, wantFlow = true) {
+  advance(enc, sl) {
     const g = this.gpu;
     this.k = 1 - this.k;
     const pk = this.pyr[this.k];
     this.pass(enc, pk[0].view, g.down1, sl.bgDown1);
     this.pass(enc, pk[1].view, g.down, this.bgPyr[this.k][0]);
     this.pass(enc, pk[2].view, g.down, this.bgPyr[this.k][1]);
-    const flowed = this.valid && wantFlow;
+    const flowed = this.valid;
     if (flowed) {
       for (let i = 0; i < this.flow.length; i++) this.pass(enc, this.flow[i].view, this.pipes.flow, this.bgFlow[this.k][i]);
       this.pass(enc, this.cut.view, this.pipes.cut, this.bgCut);
@@ -318,7 +312,7 @@ class Sdr2hdrMotion {
     if (!row) this.mixGroups.set(a, (row = new Map()));
     let bg = row.get(b);
     if (!bg) {
-      bg = this.group(this.pipes.mix, [this.gpu.sampler, a.view, b.view, this.flow[2].view, { buffer: this.pbuf }, this.cut.view]);
+      bg = this.group(this.pipes.mix, [this.gpu.sampler, a.view, b.view, this.flow[this.flow.length - 1].view, { buffer: this.pbuf }, this.cut.view]);
       row.set(b, bg);
     }
     this.pass(enc, target.view, this.pipes.mix, bg);
@@ -328,7 +322,6 @@ class Sdr2hdrMotion {
   dropGroups() { this.mixGroups.clear(); }
 
   destroy() {
-    this.dead = true;
     for (const t of this.textures) t.destroy();
     for (const b of this.qbufs) b.destroy();
     this.pbuf.destroy();
@@ -373,7 +366,8 @@ class Sdr2hdrSchedule {
   }
 
   // The next frame, with video time ts, begins its pair at now (ms).
-  // rate: the video's playback rate. frameMs: how long a frame lasts.
+  // rate: the video's playback rate. frameMs: how long a frame lasts at
+  // normal speed.
   // flowed: the motion between it and the frame before it was worked out.
   // Returns { pair, near, slip, resync, gap }: pair, as above; near, the two
   // frames are one or two frames apart (a bigger hole is a seek or a stall,
@@ -382,8 +376,9 @@ class Sdr2hdrSchedule {
   // the clock was started afresh because it was too far behind; gap, the gap
   // in ms (NaN if not near).
   start(now, ts, rate, frameMs, flowed) {
+    const real = frameMs / (rate || 1);       // how long a frame lasts as it is being played
     const gap = this.curTs != null && ts != null ? (ts - this.curTs) / 1000 / (rate || 1) : NaN;
-    const near = gap > 4 && gap < frameMs * 2.5 + 1;
+    const near = gap > 4 && gap < real * 2.5 + 1;
     const was = this.pair;
     const nextAt = this.t0 + this.dur;
     const slip = was ? now - nextAt : NaN;
@@ -393,7 +388,7 @@ class Sdr2hdrSchedule {
     const keep = was && this.pair && slip < Math.max(this.dur * 1.5, 50);
     const resync = was && this.pair && !keep;
     this.t0 = keep ? nextAt : now;
-    this.dur = near ? gap : frameMs;
+    this.dur = near ? gap : real;
     this.curTs = ts;
     return { pair: this.pair, near, slip, resync, gap: near ? gap : NaN };
   }
@@ -422,13 +417,14 @@ const sdr2hdrHalf = (h) => {
 // from A to B. Runs the real passes, then reads back the flow and the picture
 // at t = 0.5 and compares them with what is known to be true.
 // Returns { ok, flowErr, flowSize, midErr, ms, why } with errors in pixels of
-// the 480x270 flow grid (flowErr) and in 0 to 1 colour (midErr), or throws.
-async function sdr2hdrInterpSelfTest(gpu, pipes, mx = 12 / 512, my = 5 / 288, t = 0.5) {
+// the flow grid (flowErr) and in 0 to 1 colour (midErr), or throws.
+async function sdr2hdrInterpSelfTestRun(gpu, pipes, mx, my, t, own) {
   const { device } = gpu;
   const W = 512, H = 288;
   const began = performance.now();
   const usage = GPUTextureUsage.RENDER_ATTACHMENT | GPUTextureUsage.TEXTURE_BINDING | GPUTextureUsage.COPY_SRC;
-  const keep = [];
+  const keep = own.keep;
+  const [FW, FH] = SDR2HDR_FLOW_LEVELS[0];     // the grid the flow is on
   const frame = () => { const t = device.createTexture({ size: [W, H], format: SDR2HDR_FRAME_FORMAT, usage }); keep.push(t); return { tex: t, view: t.createView() }; };
   const A = frame(), B = frame(), E = frame(), M = frame();
   const card = (target, sx, sy) => {
@@ -447,72 +443,78 @@ async function sdr2hdrInterpSelfTest(gpu, pipes, mx = 12 / 512, my = 5 / 288, t 
   card(B, mx, my);
   card(E, mx * t, my * t);
   for (const s of [A, B]) s.bgDown1 = device.createBindGroup({ layout: gpu.down1.getBindGroupLayout(0), entries: [{ binding: 0, resource: gpu.sampler }, { binding: 1, resource: s.view }] });
-  const motion = new Sdr2hdrMotion(gpu, pipes);
+  const motion = (own.motion = new Sdr2hdrMotion(gpu, pipes));
   const bytes = (w, h, size) => { const row = Math.ceil(w * size / 256) * 256; return { row, size: row * h }; };
-  const fl = bytes(480, 270, 8), md = bytes(W, H, 4);
+  const fl = bytes(FW, FH, 8), md = bytes(W, H, 4);
   const fbuf = device.createBuffer({ size: fl.size, usage: GPUBufferUsage.MAP_READ | GPUBufferUsage.COPY_DST });
   const mbuf = device.createBuffer({ size: md.size, usage: GPUBufferUsage.MAP_READ | GPUBufferUsage.COPY_DST });
   const ebuf = device.createBuffer({ size: md.size, usage: GPUBufferUsage.MAP_READ | GPUBufferUsage.COPY_DST });
   const abuf = device.createBuffer({ size: md.size, usage: GPUBufferUsage.MAP_READ | GPUBufferUsage.COPY_DST });
   const bbuf = device.createBuffer({ size: md.size, usage: GPUBufferUsage.MAP_READ | GPUBufferUsage.COPY_DST });
   const cbuf = device.createBuffer({ size: 256, usage: GPUBufferUsage.MAP_READ | GPUBufferUsage.COPY_DST });
-  try {
-    const enc = device.createCommandEncoder();
-    motion.advance(enc, A);
-    const flowed = motion.advance(enc, B);
-    motion.mix(enc, A, B, t, M, 0);
-    enc.copyTextureToBuffer({ texture: motion.flow[2].tex }, { buffer: fbuf, bytesPerRow: fl.row }, [480, 270]);
-    enc.copyTextureToBuffer({ texture: M.tex }, { buffer: mbuf, bytesPerRow: md.row }, [W, H]);
-    enc.copyTextureToBuffer({ texture: E.tex }, { buffer: ebuf, bytesPerRow: md.row }, [W, H]);
-    enc.copyTextureToBuffer({ texture: A.tex }, { buffer: abuf, bytesPerRow: md.row }, [W, H]);
-    enc.copyTextureToBuffer({ texture: B.tex }, { buffer: bbuf, bytesPerRow: md.row }, [W, H]);
-    enc.copyTextureToBuffer({ texture: motion.cut.tex }, { buffer: cbuf, bytesPerRow: 256 }, [1, 1]);
-    device.queue.submit([enc.finish()]);
-    await Promise.all([fbuf, mbuf, ebuf, abuf, bbuf, cbuf].map((b) => b.mapAsync(GPUMapMode.READ)));
-    // Flow: the shift F with A(x + F) = B(x) is minus the motion, in
-    // fractions of the frame; compared in pixels of the 480x270 grid, over
-    // the middle of the frame (the edges have nothing to match with).
-    const f16 = new Uint16Array(fbuf.getMappedRange().slice(0));
-    const wantX = -mx * 480, wantY = -my * 270;
-    let sum = 0, n = 0;
-    const errs = [];
-    const margin = 70;
-    for (let y = margin; y < 270 - margin; y++) {
-      for (let x = margin; x < 480 - margin; x++) {
-        const o = (y * (fl.row / 2)) + x * 4;
-        const fx = sdr2hdrHalf(f16[o]) * 480, fy = sdr2hdrHalf(f16[o + 1]) * 270;
-        const e = Math.hypot(fx - wantX, fy - wantY);
-        sum += e;
-        errs.push(e);
-        n++;
+  keep.push(fbuf, mbuf, ebuf, abuf, bbuf, cbuf);
+  const enc = device.createCommandEncoder();
+  motion.advance(enc, A);
+  const flowed = motion.advance(enc, B);
+  motion.mix(enc, A, B, t, M, 0);
+  enc.copyTextureToBuffer({ texture: motion.flow[motion.flow.length - 1].tex }, { buffer: fbuf, bytesPerRow: fl.row }, [FW, FH]);
+  enc.copyTextureToBuffer({ texture: M.tex }, { buffer: mbuf, bytesPerRow: md.row }, [W, H]);
+  enc.copyTextureToBuffer({ texture: E.tex }, { buffer: ebuf, bytesPerRow: md.row }, [W, H]);
+  enc.copyTextureToBuffer({ texture: A.tex }, { buffer: abuf, bytesPerRow: md.row }, [W, H]);
+  enc.copyTextureToBuffer({ texture: B.tex }, { buffer: bbuf, bytesPerRow: md.row }, [W, H]);
+  enc.copyTextureToBuffer({ texture: motion.cut.tex }, { buffer: cbuf, bytesPerRow: 256 }, [1, 1]);
+  device.queue.submit([enc.finish()]);
+  await Promise.all([fbuf, mbuf, ebuf, abuf, bbuf, cbuf].map((b) => b.mapAsync(GPUMapMode.READ)));
+  // Flow: the shift F with A(x + F) = B(x) is minus the motion, in
+  // fractions of the frame; compared in pixels of the flow grid, over
+  // the middle of the frame (the edges have nothing to match with).
+  const f16 = new Uint16Array(fbuf.getMappedRange().slice(0));
+  const wantX = -mx * FW, wantY = -my * FH;
+  let sum = 0, n = 0;
+  const errs = [];
+  const margin = 70;
+  for (let y = margin; y < FH - margin; y++) {
+    for (let x = margin; x < FW - margin; x++) {
+      const o = (y * (fl.row / 2)) + x * 4;
+      const fx = sdr2hdrHalf(f16[o]) * FW, fy = sdr2hdrHalf(f16[o + 1]) * FH;
+      const e = Math.hypot(fx - wantX, fy - wantY);
+      sum += e;
+      errs.push(e);
+      n++;
+    }
+  }
+  const flowErr = sum / n;
+  errs.sort((a, b) => a - b);
+  const flowMedian = errs[errs.length >> 1];
+  const flowGood = errs.filter((e) => e < 1).length / errs.length;
+  // Picture: mean difference from the truth over the middle.
+  const m32 = new Uint32Array(mbuf.getMappedRange().slice(0));
+  const diff = (other) => {
+    const o32 = new Uint32Array(other.getMappedRange().slice(0));
+    let ds = 0, dn = 0;
+    for (let y = 40; y < H - 40; y++) {
+      for (let x = 40; x < W - 40; x++) {
+        const a = m32[y * (md.row / 4) + x], b = o32[y * (md.row / 4) + x];
+        for (let c = 0; c < 3; c++) ds += Math.abs(((a >> (10 * c)) & 1023) - ((b >> (10 * c)) & 1023)) / 1023;
+        dn += 3;
       }
     }
-    const flowErr = sum / n;
-    errs.sort((a, b) => a - b);
-    const flowMedian = errs[errs.length >> 1];
-    const flowGood = errs.filter((e) => e < 1).length / errs.length;
-    // Picture: mean difference from the truth over the middle.
-    const m32 = new Uint32Array(mbuf.getMappedRange().slice(0));
-    const diff = (other) => {
-      const o32 = new Uint32Array(other.getMappedRange().slice(0));
-      let ds = 0, dn = 0;
-      for (let y = 40; y < H - 40; y++) {
-        for (let x = 40; x < W - 40; x++) {
-          const a = m32[y * (md.row / 4) + x], b = o32[y * (md.row / 4) + x];
-          for (let c = 0; c < 3; c++) ds += Math.abs(((a >> (10 * c)) & 1023) - ((b >> (10 * c)) & 1023)) / 1023;
-          dn += 3;
-        }
-      }
-      return ds / dn;
-    };
-    const midErr = diff(ebuf), errA = diff(abuf), errB = diff(bbuf);
-    const cutValue = sdr2hdrHalf(new Uint16Array(cbuf.getMappedRange().slice(0))[0]);
-    const ms = performance.now() - began;
-    const ok = flowed && flowMedian < 0.7 && midErr < 0.01;
-    return { ok, flowed, flowErr, flowMedian, flowGood, midErr, errA, errB, cutValue, ms, want: [wantX, wantY], why: ok ? '' : `the flow was off by ${flowMedian.toFixed(2)} px (typical) and the picture by ${(midErr * 100).toFixed(1)}%` };
+    return ds / dn;
+  };
+  const midErr = diff(ebuf), errA = diff(abuf), errB = diff(bbuf);
+  const cutValue = sdr2hdrHalf(new Uint16Array(cbuf.getMappedRange().slice(0))[0]);
+  const ms = performance.now() - began;
+  const ok = flowed && flowMedian < 0.7 && midErr < 0.01;
+  return { ok, flowed, flowErr, flowMedian, flowGood, midErr, errA, errB, cutValue, ms, want: [wantX, wantY], why: ok ? '' : `the flow was off by ${flowMedian.toFixed(2)} px (typical) and the picture by ${(midErr * 100).toFixed(1)}%` };
+}
+
+// Runs the check and lets go of everything it made, whether it passed or not.
+async function sdr2hdrInterpSelfTest(gpu, pipes, mx = 12 / 512, my = 5 / 288, t = 0.5) {
+  const own = { keep: [], motion: null };
+  try {
+    return await sdr2hdrInterpSelfTestRun(gpu, pipes, mx, my, t, own);
   } finally {
-    motion.destroy();
-    for (const t of keep) t.destroy();
-    for (const b of [fbuf, mbuf, ebuf, abuf, bbuf, cbuf]) b.destroy();
+    if (own.motion) own.motion.destroy();
+    for (const x of own.keep) x.destroy();
   }
 }

@@ -362,10 +362,6 @@
     return gpuPromise;
   }
 
-  // True if the video is already HDR (PQ / HLG), in which case we leave it alone.
-  // Looking means grabbing a frame, so the answer is remembered for a few
-  // seconds per video; a new source or a change of resolution (a quality
-  // switch) asks again straight away.
   // ---- Frame interpolation ---------------------------------------------------
   //
   // The pipelines of interp.js, made the first time a video wants them, and
@@ -384,7 +380,7 @@
       it.ready = true;
       note(`smooth motion is ready: its check passed (the flow was ${r.flowMedian.toFixed(2)} px off and the picture ${(r.midErr * 100).toFixed(2)}% off, in ${Math.round(r.ms)} ms)`);
     }).catch((e) => {
-      it.failed = `${e.name}: ${e.message}`;
+      it.failed = e.message.startsWith('its own check') ? e.message : `${e.name}: ${e.message}`;
       log(`smooth motion is not available on this GPU: ${it.failed}`);
       note(`smooth motion is not available on this GPU (${it.failed})`);
     });
@@ -396,6 +392,10 @@
   let interpView = 0;
   const INTERP_VIEWS = ['normal', 'fallback in red', 'the motion found'];
 
+  // True if the video is already HDR (PQ / HLG), in which case we leave it alone.
+  // Looking means grabbing a frame, so the answer is remembered for a few
+  // seconds per video; a new source or a change of resolution (a quality
+  // switch) asks again straight away.
   const HDR_RECHECK_MS = 5000;
   const hdrSeen = new WeakMap();   // video -> { key, at, hdr }
   function isHdrSource(video) {
@@ -745,8 +745,8 @@
       this.ipFailed = '';       // what went wrong, if interpolating failed on this video
       this.ipWhy = '';          // why not, for the report
       this.sched = new Sdr2hdrSchedule();   // when to show what (see interp.js)
-      this.ipShown = null;      // the last picture put on screen while interpolating: { sl, t }
-      this.ipStat = { frames: 0, made: 0, held: 0, resyncs: 0, gaps: 0, since: 0, work: [] };
+      this.ipShown = null;      // the last picture put on screen while interpolating: { sl }
+      this.ipStat = { frames: 0, made: 0, late: 0, resyncs: 0, jumps: 0, skipped: 0, since: 0, work: [] };
       this.motion = null;       // the flow between the two frames (see interp.js)
       this.midSlot = null;      // the texture the made-up pictures are drawn into
       this.seenTs = null;       // timestamp of the video frame last copied
@@ -857,7 +857,7 @@
       this.ro = new ResizeObserver(() => { this.layout(); this.render(); });
       this.ro.observe(video);
 
-      this.onMeta = () => { this.reset = true; this.resetAuto(); this.ease.offUntil = 0; this.ease.fails = 0; this.beat.offUntil = 0; this.beat.fails = 0; this.procBase = 0; this.layout(); };
+      this.onMeta = () => { this.reset = true; this.ipFailed = ''; this.resetAuto(); this.ease.offUntil = 0; this.ease.fails = 0; this.beat.offUntil = 0; this.beat.fails = 0; this.procBase = 0; this.layout(); };
       // After a seek, draw the new frame even if the browser doesn't announce
       // it (a paused video may not).
       this.onSeek = () => { this.reset = true; this.queue.length = 0; setTimeout(() => this.render(), 60); };
@@ -924,6 +924,7 @@
     // itself when the video pauses or the setting is switched off.
     syncLoop() {
       if (this.dead) return;
+      if (this.ipOn) this.interpPlan();      // settled here too, for when nothing is being drawn (paused, or Every refresh off)
       if (!settings.poll) this.endEpisode();
       else if (!this.raf && !this.video.paused) this.raf = requestAnimationFrame(this.onTick);
     }
@@ -1032,17 +1033,17 @@
       return `${this.canvas.width}x${this.canvas.height}`;
     }
 
-    // The highest level that keeps pixels drawn per second within budget, for
-    // this video's frame rate and the size it's shown at. Auto never draws
-    // above it. It used to start at full quality and back off only after
-    // falling behind, and that overload is where the worst stutter came from.
     // How many pictures a second are drawn: the video's frames, or, while
     // smooth motion is on, one for every refresh of the screen. What the GPU
     // is asked to do is counted by this, not by the video's frame rate.
     drawFps() {
-      return this.ipOn && this.tickMs > 3 ? Math.max(this.srcFps, 1000 / this.tickMs) : this.srcFps;
+      return settings.interp === 'on' && this.ipOn && this.tickMs > 3 ? Math.max(this.srcFps, 1000 / this.tickMs) : this.srcFps;
     }
 
+    // The highest level that keeps pixels drawn per second within budget, for
+    // this video's frame rate and the size it's shown at. Auto never draws
+    // above it. It used to start at full quality and back off only after
+    // falling behind, and that overload is where the worst stutter came from.
     budgetLevel() {
       if (!this.box || !(this.srcFps > 0)) return 0;
       for (let l = 0; l < LEVELS.length; l++) {
@@ -2087,8 +2088,9 @@
     // the sound: the picture between frame A and frame B can only be made
     // once B is there, so A is shown when B arrives, and B one frame later.
     //
-    // Per refresh: if a new frame is waiting in the queue it becomes the
-    // newest (this.cur), the one before it becomes this.ipPrev, and the flow
+    // Per refresh: if a new frame is waiting in the queue, and the clock says
+    // it is its turn (Sdr2hdrSchedule.due), it becomes the newest (this.cur),
+    // the one before it becomes this.ipPrev, and the flow
     // between them is worked out once (Sdr2hdrMotion.advance). What goes on
     // screen is then picked by how far into the gap between them this
     // refresh is: t = 0 shows ipPrev as it is, t = 1 shows cur as it is, and
@@ -2106,11 +2108,11 @@
       if (settings.interp !== 'on') why = 'switched off';
       else if (!it) why = this.gpu.interp && this.gpu.interp.failed ? `not available on this GPU (${this.gpu.interp.failed})` : 'getting ready';
       else if (this.ipFailed) why = `it was stopped (${this.ipFailed})`;
-      else if (!this.polling) why = 'this browser cannot tell the video\'s frames apart';
+      else if (!this.polling) why = 'Every refresh is off, or this browser cannot tell the video\'s frames apart';
       else if (this.ease.half) why = 'the decoder is falling behind';
       else if (!(this.srcFps > 0) || !(this.tickMs > 3)) why = 'the frame rate or the screen\'s refresh rate is not known yet';
       else {
-        const ratio = 1000 / this.srcFps / this.tickMs;
+        const ratio = 1000 / (this.srcFps * (this.video.playbackRate || 1)) / this.tickMs;
         if (ratio < (this.ipOn ? 1.3 : 1.45)) why = `${this.srcFps.toFixed(0)} frames a second is too many for a ${(1000 / this.tickMs).toFixed(0)} Hz screen to gain from this`;
       }
       const on = !why;
@@ -2119,7 +2121,7 @@
         this.ipOn = on;
         this.ipWhy = why;
         if (changed) {
-          this.ipStat.since = performance.now();
+          if (on) this.ipStat = { frames: 0, made: 0, late: 0, resyncs: 0, jumps: 0, skipped: 0, since: performance.now(), work: [] };
           note(on
             ? `${nameOf(this.video)}: making up the pictures between frames (${this.srcFps.toFixed(1)} frames a second on a ${(1000 / this.tickMs).toFixed(0)} Hz screen)`
             : `${nameOf(this.video)}: not making up pictures between frames${why === 'switched off' ? '' : `, because ${why}`}`);
@@ -2138,6 +2140,7 @@
       this.ipShown = null;
       this.sched.reset();
       if (this.motion) this.motion.reset();
+      this.dropMid();
     }
 
     // The texture the made-up pictures go into, the size of a copy of a frame.
@@ -2180,6 +2183,10 @@
       let promoted = false;
       // The next frame begins its pair when the clock says so (see
       // Sdr2hdrSchedule), not as soon as it has turned up.
+      // A backlog (more than the one waiting) is skipped to the newest frame:
+      // frames are taken one a gap, so it would never drain, and the picture
+      // would run behind for good.
+      if (this.queue.length > 1 && this.sched.due(now)) st.skipped += this.queue.splice(0, this.queue.length - 1).length;
       const sl = this.queue.length && this.sched.due(now) ? this.queue.shift() : null;
       if (sl) {
         const prev = this.cur;
@@ -2193,8 +2200,8 @@
           return;
         }
         const a = this.sched.start(now, sl.ts, this.video.playbackRate, frameMs, flowed);
-        if (prev && !a.near) st.gaps++;
-        if (a.slip > 20) st.held++;
+        if (prev && !a.near) st.jumps++;
+        if (a.slip > 20) st.late++;
         if (a.resync) st.resyncs++;
         this.ipPrev = a.pair ? prev : null;
         this.cur = sl;
@@ -2218,17 +2225,19 @@
         // The newest frame as it is: a frame with nothing before it, or the
         // end of the gap with the next frame late.
         if (!shown || shown.sl !== cur || this.needsDraw) ok = this.present(cur, promoted, began, true);
-        this.ipShown = { sl: cur, t: 1 };
+        this.ipShown = { sl: cur };
       } else if (kind === 'prev') {
         ok = this.present(prev, promoted, began, true);
-        this.ipShown = { sl: prev, t: 0 };
+        this.ipShown = { sl: prev };
       } else {
         const mid = this.ensureMid();
         const enc = this.gpu.device.createCommandEncoder();
         this.motion.mix(enc, prev, cur, t, mid, interpView);
         this.gpu.device.queue.submit([enc.finish()]);
-        ok = this.present(mid, false, began, true);
-        this.ipShown = { sl: mid, t };
+        // newFrame when the pair has just begun, so that a model (Guided or
+        // Model) is run for it even when its first picture is a made-up one.
+        ok = this.present(mid, promoted, began, true);
+        this.ipShown = { sl: mid };
         if (ok) st.made++;
       }
       if (!ok) { this.hitches.undrawn++; return; }
@@ -2246,6 +2255,7 @@
     // smooth motion off and on again in the popup tries again.
     interpGiveUp(why) {
       this.ipFailed = why;
+      this.ipStat.work.length = 0;
       log(`smooth motion stopped on ${nameOf(this.video)}: ${why}`);
       this.interpStop();
     }
@@ -2266,7 +2276,7 @@
       const n = (x, d = 1) => (Number.isFinite(x) ? x.toFixed(d) : '-');
       return [
         `Smooth motion: on. ${this.srcFps.toFixed(1)} frames a second on a ${n(1000 / this.tickMs, 0)} Hz screen; the picture runs one video frame (${n(1000 / this.srcFps, 0)} ms) behind the sound.${check}`,
-        `  Since it came on (${n(secs, 0)} s): ${st.frames} video frames, ${st.made} pictures made up, ${st.held} frames came more than 20 ms late (the last picture was held), ${st.resyncs} times the clock was started again (a frame too far behind), ${st.gaps} gaps (a seek or a stall) not made up across.`,
+        `  Since it came on (${n(secs, 0)} s): ${st.frames} video frames, ${st.made} pictures made up, ${st.late} frames came more than 20 ms late (the last picture was held), ${st.skipped} were skipped to catch up, ${st.resyncs} times the clock was started again (a frame too far behind), ${st.jumps} gaps (a seek or a stall) not made up across.`,
         `  Working out the motion for a new frame took the GPU ${n(w.length ? w[w.length >> 1] : NaN)} ms typically and ${n(w.length ? w[w.length - 1] : NaN)} ms at most (as seen from the page, so it includes waiting its turn). The view for judging it (Alt+Shift+I with Stats on): ${INTERP_VIEWS[interpView]}.`,
       ];
     }
