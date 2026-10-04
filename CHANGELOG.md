@@ -16,6 +16,7 @@ Fixes from a review of the whole extension for logic, security and readability p
 ### Changed
 
 - README: the Alt+Shift+M row says it goes round shader, guided and model; "three switches" for the site card; the permission is named `declarativeNetRequestWithHostAccess`; the Files table covers `theme.js`, what `ui.css` and `background.js` do, and what `icons/` holds; the model has a preparation step and eleven passes. Comments in `background.js`, `pacer.html` and `ui.css` that no longer matched the code are corrected, and the 1.2.5 entry's popup heights agree with each other.
+- `CLAUDE.md` added: the owner's working rules and the checks every major update gets, so a new Claude session picks them up. Not part of the extension (the zip does not include it).
 
 ### Found and not changed (low)
 
