@@ -5,8 +5,10 @@
 // saves to Downloads. Nothing is sent anywhere: the zip is made here, in the
 // page, and what happens to it after that is for its owner to decide.
 //
-// This file is the part with no GPU in it: turning the frames into pictures
-// (PNG) and the zip. The GPU's frames are read back in content.js.
+// This file is the part that is not about the page: turning the frames into
+// pictures (PNG), the zip, and the little pass that shrinks a picture for the
+// recorder (Alt+Shift+R: the last second of what was put on screen). The
+// frames are read back from the GPU in content.js.
 
 // The CRC-32 that a zip keeps for each file.
 const SDR2HDR_CRC_TABLE = (() => {
@@ -70,6 +72,36 @@ function sdr2hdrFrameToRgba(words, w, h, rowBytes) {
     }
   }
   return out;
+}
+
+// Shrinks a picture to the size of the target: four bilinear taps spread over
+// the target texel, which is enough for pictures to look at.
+const SDR2HDR_SHRINK = SDR2HDR_COMMON + /* wgsl */ `
+@group(0) @binding(0) var samp: sampler;
+@group(0) @binding(1) var src: texture_2d<f32>;
+
+@fragment
+fn fs(in: VOut) -> @location(0) vec4f {
+  let px = vec2f(abs(dpdx(in.uv.x)), abs(dpdy(in.uv.y)));
+  var acc = vec3f(0.0);
+  for (var j = 0; j < 2; j++) {
+    for (var i = 0; i < 2; i++) {
+      let o = (vec2f(f32(i), f32(j)) - 0.5) * 0.5 * px;
+      acc += textureSampleLevel(src, samp, in.uv + o, 0.0).rgb;
+    }
+  }
+  return vec4f(acc * 0.25, 1.0);
+}
+`;
+
+function sdr2hdrShrinkPipeline(device) {
+  const module = device.createShaderModule({ code: SDR2HDR_SHRINK });
+  return device.createRenderPipeline({
+    layout: 'auto',
+    vertex: { module, entryPoint: 'vsFull' },
+    fragment: { module, entryPoint: 'fs', targets: [{ format: SDR2HDR_FRAME_FORMAT }] },
+    primitive: { topology: 'triangle-strip' },
+  });
 }
 
 // The GPU wants the rows of a copy to a buffer to start on 256 bytes.
