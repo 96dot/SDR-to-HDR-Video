@@ -8,13 +8,14 @@ All notable changes to Headroom HDR (called SDR to HDR Video before 0.11). Versi
 
 - **The Rose theme is replaced by Match**, placed second to last, just before Custom. Pick one colour and the second is worked out from it (turned 75 degrees round the colour wheel, about as far as Aurora turns its two, at the same lightness, for a bolder pair), so the pair always goes together. The glow, the light behind the glass, the popup's logo and the toolbar icon are all made from the pair, the same way as for Custom. Its colour is kept separately from Custom's two, so changing one doesn't touch the other. Match starts on pink.
 - Anyone who had Rose chosen is moved to Amber.
+- **A glass colour picker for Match and Custom**, in place of the browser's own colour dialog (which can't be styled, and can close the popup while it is open). Click a colour box and a glass panel opens under the Colours card with a square for how vivid and how bright, a strip for the colour, and a box for a hex code. It floats over the cards below, so the popup does not grow (586 px with it open, as before). Works with the keyboard (arrow keys, Shift for bigger steps); Esc, a click outside, or choosing another theme closes it.
 - Only the extension's own colours change. The picture, and the popup's height (586 px with the Match or Custom row showing, as before), are as they were.
 - README updated for the new theme. Its theme screenshot (`docs/themes.png`) still shows Rose.
 
 ### Tested, and not
 
-- Checked here, in headless Chromium with the extension loaded: the swatches are Amber, Ocean, Aurora, Match, Custom in that order; choosing Match shows its one-colour row, and a picked colour is applied, saved, and gives the toolbar icon (the service worker) the same pair as the popup; a saved Rose falls back to Amber; no errors; the settings view is 559 px with other themes and 586 px with Match or Custom.
-- Not checked: how the Match colours look to you across the range of colours you might pick (very dark or very pale ones especially), and the toolbar icon in a real toolbar. The 75 degree turn is my choice, taken from how far Aurora's two colours sit apart; it's one number, easy to change.
+- Checked here, in headless Chromium with the extension loaded: the swatches are Amber, Ocean, Aurora, Match, Custom in that order; choosing Match shows its one-colour row, and a picked colour (dragged, typed as a hex code, or from the keyboard) is applied, saved, and gives the toolbar icon (the service worker) the same pair as the popup; a saved Rose falls back to Amber; no errors; the settings view is 559 px with other themes and 586 px with Match or Custom.
+- Not checked: how the picker feels under a real mouse and how the glass looks in Brave (headless Chromium does not blur what is behind it, so the panel is made dense enough not to need it); the picker in the Aurora theme; how the Match colours look to you across the range of colours you might pick (very dark or very pale ones especially), and the toolbar icon in a real toolbar. The 75 degree turn is my choice, taken from how far Aurora's two colours sit apart; it's one number, easy to change.
 
 ## 1.2.4 - 2026-10-04
 

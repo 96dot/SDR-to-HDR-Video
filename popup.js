@@ -107,42 +107,115 @@ $('cog').addEventListener('click', () => {
   $('cog').setAttribute('aria-pressed', String(open));
 });
 // Colour themes (see theme.js).
+const fillColour = (el, hex) => { el.style.background = hex; };
 const markTheme = () => {
   const now = document.documentElement.dataset.theme || 'amber';
   for (const b of document.querySelectorAll('.swatch')) b.setAttribute('aria-pressed', String(b.dataset.theme === now));
   $('customRow').hidden = now !== 'custom';
   $('matchRow').hidden = now !== 'match';
-  $('matchA').value = matchColour;
+  if (now !== 'custom' && now !== 'match') picker.close();
+  fillColour($('matchA'), matchColour);
   $('matchSwatch').style.background = `linear-gradient(135deg, ${matchPair(matchColour).map(hexOf).join(', ')})`;
-  $('customA').value = customColours[0];
-  $('customB').value = customColours[1];
+  fillColour($('customA'), customColours[0]);
+  fillColour($('customB'), customColours[1]);
   $('customSwatch').style.background = `linear-gradient(135deg, ${customColours[0]}, ${customColours[1]})`;
 };
 // The Custom theme's two colours, and the Match theme's one: shown as they are
 // picked, saved a moment after.
 let colourSave = 0, colourPending = null;
 const saveColours = () => { if (colourPending) { chrome.storage.local.set(colourPending); colourPending = null; } };
-$('matchA').addEventListener('input', () => {
-  applyTheme('match', null, $('matchA').value);
+const queueColours = (o) => { clearTimeout(colourSave); colourPending = o; colourSave = setTimeout(saveColours, 250); };
+const pickMatch = (hex) => {
+  applyTheme('match', null, hex);
+  fillColour($('matchA'), matchColour);
   $('matchSwatch').style.background = `linear-gradient(135deg, ${matchPair(matchColour).map(hexOf).join(', ')})`;
-  clearTimeout(colourSave);
-  colourPending = { theme: 'match', themeMatch: matchColour };
-  colourSave = setTimeout(saveColours, 250);
-});
-for (const id of ['customA', 'customB']) {
-  $(id).addEventListener('input', () => {
-    const c = [$('customA').value, $('customB').value];
-    applyTheme('custom', c);
-    $('customSwatch').style.background = `linear-gradient(135deg, ${c[0]}, ${c[1]})`;
-    clearTimeout(colourSave);
-    colourPending = { theme: 'custom', themeColours: c };
-    colourSave = setTimeout(saveColours, 250);
+  queueColours({ theme: 'match', themeMatch: matchColour });
+};
+const pickCustom = (i) => (hex) => {
+  const c = customColours.slice();
+  c[i] = hex;
+  applyTheme('custom', c);
+  fillColour($(i ? 'customB' : 'customA'), hex);
+  $('customSwatch').style.background = `linear-gradient(135deg, ${c[0]}, ${c[1]})`;
+  queueColours({ theme: 'custom', themeColours: c });
+};
+
+// The colour picker: a glass panel inside the popup (the browser's own colour
+// dialog can't be styled, and can close the popup while it is open). A square
+// for how vivid and how bright, a strip for the colour itself, and a box for
+// a hex code. It floats over the cards below, so the popup doesn't grow.
+const picker = (() => {
+  const el = $('picker'), pad = $('pad'), strip = $('hue'), box = $('pickHex');
+  let h = 0, s = 1, v = 1, owner = null, onPick = null;
+  const rgbOf = () => {
+    const f = (n) => { const k = (n + h / 60) % 6; return v - v * s * Math.max(0, Math.min(k, 4 - k, 1)); };
+    return [f(5), f(3), f(1)].map((x) => Math.round(x * 255));
+  };
+  const hex = () => '#' + rgbOf().map((x) => x.toString(16).padStart(2, '0')).join('');
+  const load = (x) => {
+    const [r, g, b] = hexRgb(x).map((n) => n / 255);
+    const hi = Math.max(r, g, b), d = hi - Math.min(r, g, b);
+    v = hi; s = hi ? d / hi : 0;
+    if (d) { h = hi === r ? ((g - b) / d) % 6 : hi === g ? (b - r) / d + 2 : (r - g) / d + 4; h = (h * 60 + 360) % 360; }
+  };
+  const draw = (typing) => {
+    pad.style.background = `linear-gradient(to top, #000, transparent), linear-gradient(to right, #fff, hsl(${h} 100% 50%))`;
+    $('padKnob').style.cssText = `left:${s * 100}%;top:${(1 - v) * 100}%;background:${hex()}`;
+    $('hueKnob').style.cssText = `left:${h / 360 * 100}%;background:hsl(${h} 100% 50%)`;
+    strip.setAttribute('aria-valuenow', String(Math.round(h)));
+    $('pickChip').style.background = hex();
+    if (!typing) box.value = hex();
+  };
+  const emit = (typing) => { draw(typing); if (onPick) onPick(hex()); };
+  const clamp = (x) => Math.max(0, Math.min(1, x));
+  const drag = (node, move) => {
+    node.addEventListener('pointerdown', (e) => { node.setPointerCapture(e.pointerId); move(e); });
+    node.addEventListener('pointermove', (e) => { if (node.hasPointerCapture(e.pointerId)) move(e); });
+  };
+  const at = (node, e) => { const r = node.getBoundingClientRect(); return [clamp((e.clientX - r.left) / r.width), clamp((e.clientY - r.top) / r.height)]; };
+  drag(pad, (e) => { const [x, y] = at(pad, e); s = x; v = 1 - y; emit(); });
+  drag(strip, (e) => { h = at(strip, e)[0] * 359.999; emit(); });
+  pad.addEventListener('keydown', (e) => {
+    const step = e.shiftKey ? 0.1 : 0.02;
+    const d = { ArrowLeft: [-step, 0], ArrowRight: [step, 0], ArrowUp: [0, step], ArrowDown: [0, -step] }[e.key];
+    if (!d) return;
+    e.preventDefault(); s = clamp(s + d[0]); v = clamp(v + d[1]); emit();
   });
-}
+  strip.addEventListener('keydown', (e) => {
+    const step = e.shiftKey ? 10 : 2;
+    const d = { ArrowLeft: -step, ArrowDown: -step, ArrowRight: step, ArrowUp: step }[e.key];
+    if (d == null) return;
+    e.preventDefault(); h = (h + d + 360) % 360; emit();
+  });
+  box.addEventListener('input', () => {
+    const x = box.value.trim();
+    if (!/^#?[0-9a-f]{6}$/i.test(x)) return;
+    load(x.startsWith('#') ? x : '#' + x); emit(true);
+  });
+  box.addEventListener('blur', () => draw());
+  const close = () => { if (el.hidden) return; el.hidden = true; if (owner) owner.setAttribute('aria-expanded', 'false'); owner = null; onPick = null; };
+  const open = (btn, current, pick) => {
+    if (owner === btn) { close(); return; }
+    close();
+    owner = btn; onPick = null; load(current); draw();
+    const card = btn.closest('section');
+    el.style.top = `${card.offsetTop + card.offsetHeight + 4}px`;
+    el.hidden = false;
+    btn.setAttribute('aria-expanded', 'true');
+    onPick = pick;
+  };
+  addEventListener('pointerdown', (e) => { if (!el.hidden && !el.contains(e.target) && !(owner && owner.contains(e.target))) close(); });
+  el.addEventListener('keydown', (e) => { if (e.key === 'Escape') { e.stopPropagation(); const o = owner; close(); if (o) o.focus(); } });
+  return { open, close };
+})();
+$('matchA').addEventListener('click', (e) => picker.open(e.currentTarget, matchColour, pickMatch));
+$('customA').addEventListener('click', (e) => picker.open(e.currentTarget, customColours[0], pickCustom(0)));
+$('customB').addEventListener('click', (e) => picker.open(e.currentTarget, customColours[1], pickCustom(1)));
 // The popup can be closed inside that moment: save at once if so.
 for (const ev of ['pagehide', 'blur']) addEventListener(ev, () => { clearTimeout(colourSave); saveColours(); });
 for (const b of document.querySelectorAll('.swatch')) {
   b.addEventListener('click', () => {
+    picker.close();
     applyTheme(b.dataset.theme);
     try { localStorage.setItem('theme', b.dataset.theme); } catch (e) {}
     chrome.storage.local.set(b.dataset.theme === 'custom' ? { theme: 'custom', themeColours: customColours } : b.dataset.theme === 'match' ? { theme: 'match', themeMatch: matchColour } : { theme: b.dataset.theme });
