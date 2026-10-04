@@ -50,6 +50,18 @@ for (const [name, px, pattern] of [['pan 30 px', 30, 1], ['pan -30 px', -30, 1],
     `picture ${(r.midErr * 100).toFixed(2)}%, left side ${(b.left * 100).toFixed(1)}%, right side ${(b.right * 100).toFixed(1)}%, horizon ${(b.horizon * 100).toFixed(1)}%, ${(g.fellBack * 100).toFixed(1)}% fell back to a real frame`);
 }
 
+// The motion the whole picture agrees on (what the picture falls back on where
+// the motion found at one place is no good). It used to be an average of the
+// motions found weighted by how well they matched, which a flat area (it matches
+// any shift) pulled toward nothing: on a picture that is mostly sky it found
+// +3.5 px for a pan of -28 px.
+for (const [name, px, py, pattern] of [['pan across a scene', 30, 0, 1], ['pan the other way', -30, 0, 1], ['fast pan', 50, 0, 1], ['pan across a picture that is mostly flat sky', 30, 0, 3], ['the same, the other way', -30, 0, 3], ['a fast pan of it', 50, 0, 3], ['a vertical pan of it', 0, 20, 3]]) {
+  const r = await page.evaluate(([a, b, p]) => window.runSelfTest(a / 512, b / 288, 0.5, p, 0.02), [px, py, pattern]);
+  const want = [-px * 480 / 512, -py * 270 / 288];
+  const err = Math.hypot(r.globalFlow[0] - want[0], r.globalFlow[1] - want[1]);
+  check(`overall motion: ${name}`, err < 2.5, `found ${r.globalFlow[0].toFixed(1)}, ${r.globalFlow[1].toFixed(1)} px; true ${want[0].toFixed(1)}, ${want[1].toFixed(1)}`);
+}
+
 // A cut: the second frame is the first moved far beyond what can be matched.
 // The picture between them should be one frame or the other as it is, not a
 // blend of the two.

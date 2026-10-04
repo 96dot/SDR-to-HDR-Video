@@ -2,6 +2,26 @@
 
 All notable changes to Headroom HDR (called SDR to HDR Video before 0.11). Versions follow the number in `manifest.json`.
 
+## 1.3.3 - 2026-10-04
+
+### Fixed
+
+- **Red, flickering bands at the sides of the picture on panning shots** (the "fallback" view, Alt+Shift+I), which on the normal view are patches of the plain frame next to made-up picture half a move out of place: a tear. The cause was the second tier added in 1.3.2, the motion the whole picture agrees on. It was worked out as the average of the motions found, weighted by how well each matched, and a flat area (a smooth sky, a dark scene) matches any shift perfectly, so flat areas outvoted the rest: on a made-up picture that is mostly sky it found +3.5 px for a pan of -28 px, the wrong way, and on an ordinary scene it came out a fifth short. With the overall motion wrong, the sides, where the motion found locally is no good, had nothing to fall back on and showed the plain frame. Your report said the match was very good almost everywhere (0.002), which is what a flat or dark picture looks like.
+  - It is now found by trying every shift of the whole picture within the search range (25 by 25 shifts at the 120x68 level, read at every other texel) and taking the one that fits the whole picture best, with a parabola through it for the part of a texel; flat areas fit every shift equally and so do not decide. On made-up pans it is within about a pixel (of 480) of the truth, on a scene that is mostly flat sky as well as on an ordinary one, and vertical pans too.
+  - Two passes added per video frame (the cost of each shift, and the best of them); they run with the motion's other passes and are inside the same GPU timing.
+  - On the made-up pans the picture error fell too: a 30 px pan from 0.96% to 0.54%, the side the content enters from from 4.3% to 2.6%, and the share of the picture falling back to a plain frame from 1.6% to 0.
+- The "fastest thing moved" figure is unchanged (the largest motion found at the coarsest level).
+
+### Found and not changed
+
+- Your last report's fastest motion was 56 px on a grid 480 wide, at the edge of what can be followed (about 57). A pan faster than that is beyond the search and will fall back to plain frames, for the whole picture. Raising the reach costs GPU time; to be decided from a report in which the fastest motion is over the limit.
+- The overall motion is a shift of the whole picture. A zoom, a rotation or strong lens distortion at the sides still leaves places where neither tier fits, and they show the plain frame.
+
+### Tested, and not
+
+- Checked here: the overall motion against the truth on seven made-up pans (a scene, the other way, fast, a mostly flat scene, the other way, fast, a vertical pan), all within 2.5 px (of 480) and most within 1; all the earlier shader and timing tests; the extension running end to end in headless Chromium.
+- Not checked: on your video and your card, which is what matters. If the red bands are gone, or much smaller, in the Alt+Shift+I view on the same shot, it worked.
+
 ## 1.3.2 - 2026-10-04
 
 ### Fixed
