@@ -2,6 +2,17 @@
 
 All notable changes to Headroom HDR (called SDR to HDR Video before 0.11). Versions follow the number in `manifest.json`.
 
+## 1.2.3 - 2026-10-04
+
+### Changed
+
+- The `activeTab` permission is no longer asked for. It did nothing that access to all sites, which the extension needs to see video wherever it is, doesn't already cover: the popup still reads the current tab's site name for per-site settings.
+- The screenshots in the README are of the current popup.
+
+### Added
+
+- `PRIVACY.md`, the privacy policy a store listing links to: nothing is collected and nothing is sent.
+
 ## 1.2.2 - 2026-10-04
 
 Fixes from a review of the whole extension by a second model, each one checked against the code before it was changed.
