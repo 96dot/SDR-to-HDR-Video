@@ -2,6 +2,30 @@
 
 All notable changes to Headroom HDR (called SDR to HDR Video before 0.11). Versions follow the number in `manifest.json`.
 
+## 1.3.8 - 2026-10-04
+
+### Fixed
+
+- **Warped swirls in the made-up pictures of a crowd and a dark sky.** (Seen by you, found with the 1.3.7 recorder and five saves of real frames from that moment.) The picture is made from the motion found at each place, and the rule that decides where that motion cannot be trusted went by how well the match fitted there. On dark sky with tiny stars, and on a crowd waving, almost any shift fits about as well, so the match said nothing and the picture came out as smeared, warped swirls (on one pair, a psychedelic patch in the sky), no better than showing the plain frame and sometimes twice as far from the truth in those places. Measured on your frames, the cost of the match had no power at all to tell the bad places from the good (0.55 on a scale where 0.5 is no better than chance).
+  - What does tell them apart: the motion found here differs from the overall motion, and the two pictures it would make disagree here (0.81). Such a place now uses the overall motion (the pan), which is the better guess where nothing can be seen to follow. A thing really moving its own way also differs from the overall motion, but its two pictures agree, so it keeps its own motion.
+  - Scored on 16 real pairs from five moments (rebuild the picture between frames 1 and 3, compare with the real frame 2, out of 255): the made-up picture's error went from 11.42 to 10.72 on average (the plain frame: 17.57). The calm moments are exactly as before (4 4 4 5 3 4 3 2); the hard ones improved (one pair 12 to 8, 20 to 17). The swirl is gone from the picture; the stars and the far crowd come out slightly soft rather than wrong.
+  - The Alt+Shift+I red view now also tints these places blue (red is still the nearer real frame).
+
+### Added
+
+- **`tests/tune.mjs` and `tests/tune.html`**: replay the mixing shader with variations on real saved frames and score each against the true frame, many in one run. This is how the fix was found (eight candidate signals ranked, then the rule tuned).
+
+### Found and not changed
+
+- The fix is a hand-picked rule on 16 pairs from one video (WWE entrance footage, the same arena); other footage may want different numbers. The tool is there to check.
+- Mean error says little about swirls (a blur scores well); the pictures had to be looked at too. Some places still look soft, and one pair (the second of the glitch moment) is still about as far from the truth as the plain frame, mostly from fast waving hands.
+- The share that falls back (the report's number) does not count these places, since they are not the plain frame.
+
+### Tested, and not
+
+- Checked here: the 16 real pairs (scores above, and the pictures before and after for the glitch moment and for the walk-in with the truss); every synthetic test (the busy picture with moving objects: its error 5.74, 5.46, 2.44% against 5.83, 5.57, 2.31% before; the posts moving twice as far 1.51 against 1.68%; cuts as before; the self-check).
+- Not checked: how it looks in motion, on your screen and in HDR, which is the only real test; other footage; the cost on your card (it adds a few reads of the two pictures per pixel in the mixing pass, which was well under a millisecond before).
+
 ## 1.3.7 - 2026-10-04
 
 ### Added

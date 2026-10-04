@@ -1,0 +1,59 @@
+<!doctype html><meta charset="utf-8"><title>Headroom HDR: shader tuning page</title>
+<!-- Replays the smooth-motion shaders (interp.js) on real saved frames (Alt+Shift+C) with variations of the picture-mixing shader, and scores each against the true frame (see tune.mjs). -->
+<script src="../shader.js"></script><script src="../interp.js"></script><script src="../capture.js"></script>
+<script>
+async function setup() {
+  const adapter = await navigator.gpu.requestAdapter();
+  const device = await adapter.requestDevice();
+  const make = (code, format) => { const module = device.createShaderModule({ code }); return device.createRenderPipelineAsync({ layout: 'auto', vertex: { module, entryPoint: 'vsFull' }, fragment: { module, entryPoint: 'fs', targets: [{ format }] }, primitive: { topology: 'triangle-strip' } }); };
+  const [down1, down] = await Promise.all([make(SDR2HDR_DOWN1, 'rgba16float'), make(SDR2HDR_DOWN, 'rgba16float')]);
+  const gpu = { device, sampler: device.createSampler({ magFilter: 'linear', minFilter: 'linear' }), down1, down };
+  const pipes = await sdr2hdrInterpPipelines(device);
+  return { gpu, pipes, make };
+}
+window.ready = setup().then((s) => { window.S = s; window.sets = []; return true; });
+const unb64 = (s) => Uint8Array.from(atob(s), (c) => c.charCodeAt(0));
+const W = 960, H = 540;
+const usage = GPUTextureUsage.RENDER_ATTACHMENT | GPUTextureUsage.TEXTURE_BINDING | GPUTextureUsage.COPY_SRC | GPUTextureUsage.COPY_DST;
+async function readTex(tex) {
+  const { device } = S.gpu; const row = sdr2hdrRowBytes(W);
+  const b = device.createBuffer({ size: row * H, usage: GPUBufferUsage.MAP_READ | GPUBufferUsage.COPY_DST });
+  const e = device.createCommandEncoder(); e.copyTextureToBuffer({ texture: tex }, { buffer: b, bytesPerRow: row }, [W, H]); device.queue.submit([e.finish()]);
+  await b.mapAsync(GPUMapMode.READ); const a = new Uint32Array(b.getMappedRange().slice(0)); b.destroy(); return { a, stride: row / 4 };
+}
+// triple: three base64 PNGs [first, truth, last]
+window.addTriple = async (name, p1, pt, p3) => {
+  const { gpu, pipes } = S; const { device } = gpu;
+  const load = async (s) => {
+    const bmp = await createImageBitmap(new Blob([unb64(s)], { type: 'image/png' }), { colorSpaceConversion: 'none', premultiplyAlpha: 'none', resizeWidth: W, resizeHeight: H, resizeQuality: 'high' });
+    const tex = device.createTexture({ size: [W, H], format: SDR2HDR_FRAME_FORMAT, usage });
+    device.queue.copyExternalImageToTexture({ source: bmp }, { texture: tex }, [W, H]); bmp.close();
+    const view = tex.createView();
+    return { tex, view, bgDown1: device.createBindGroup({ layout: gpu.down1.getBindGroupLayout(0), entries: [{ binding: 0, resource: gpu.sampler }, { binding: 1, resource: view }] }) };
+  };
+  const A = await load(p1), T = await load(pt), B = await load(p3);
+  const motion = new Sdr2hdrMotion(gpu, pipes);
+  const enc = device.createCommandEncoder(); motion.advance(enc, A); motion.advance(enc, B); device.queue.submit([enc.finish()]);
+  const M = { tex: device.createTexture({ size: [W, H], format: SDR2HDR_FRAME_FORMAT, usage }) }; M.view = M.tex.createView();
+  const truth = await readTex(T.tex), plain = await readTex(B.tex);
+  sets.push({ name, A, B, motion, M, truth, plain });
+  return sets.length;
+};
+const err = (x, y) => { let s = 0, n = 0; for (let j = 0; j < H; j++) for (let i = 0; i < W; i++) { const a = x.a[j * x.stride + i], b = y.a[j * y.stride + i]; for (let c = 0; c < 3; c++) { s += Math.abs(((a >> (10 * c)) & 1023) - ((b >> (10 * c)) & 1023)); n++; } } return s / n / 4; };
+// A variant: [[from, to], ...] applied to the mix shader. Returns the error per triple.
+window.runVariant = async (subs, dbg = 0) => {
+  const { gpu, pipes, make } = S; const { device } = gpu;
+  let code = SDR2HDR_MIX;
+  for (const [a, b] of subs) { if (!code.includes(a)) throw new Error('not found: ' + a); code = code.split(a).join(b); }
+  const mix = await make(code, SDR2HDR_FRAME_FORMAT);
+  const out = [];
+  for (const s of sets) {
+    s.motion.pipes = { ...pipes, mix }; s.motion.dropGroups();
+    const e = device.createCommandEncoder(); s.motion.mix(e, s.A, s.B, 0.5, s.M, dbg); device.queue.submit([e.finish()]);
+    const r = await readTex(s.M.tex);
+    out.push({ name: s.name, made: err(r, s.truth), plain: err(s.plain, s.truth) });
+  }
+  return out;
+};
+
+</script>

@@ -267,7 +267,7 @@ fn hue(h: f32) -> vec3f {
   return clamp(abs((k - floor(k / 6.0) * 6.0) - 3.0) - 1.0, vec3f(0.0), vec3f(1.0));
 }
 
-struct Made { rgb: vec3f, w: f32, f: vec2f };
+struct Made { rgb: vec3f, w: f32, f: vec2f, x: f32 };
 
 // The picture at uv, and how much of it is the plain nearer frame (w).
 fn mixAt(uv: vec2f) -> Made {
@@ -296,7 +296,17 @@ fn mixAt(uv: vec2f) -> Made {
   // And everywhere, if the frame as a whole did not match: a cut.
   let wc = smoothstep(0.065, 0.088, cutv.r);
 
-  let tier = mix(loc.rgb, glo.rgb, wl);
+  // Where the motion found here is not the overall motion and the two
+  // pictures it makes disagree, it is most likely a wrong match (dark sky,
+  // a crowd, fine detail that looks the same shifted any way: the cost of the
+  // match says nothing there, and the picture came out as warped swirls on
+  // real footage). The overall motion is the better guess for such a place.
+  // A thing really moving its own way also differs from the overall motion,
+  // but then its two pictures agree. (x: how much of this, for the view.)
+  let away = length(fl.xy - textureLoad(glob, vec2i(0, 0), 0).xy) * ${SDR2HDR_FLOW_LEVELS[0][0]}.0;
+  let wx = smoothstep(0.15, 0.45, clamp(away / 20.0, 0.0, 1.0) * clamp(loc.diff * 4.0, 0.0, 1.0));
+
+  let tier = mix(mix(loc.rgb, glo.rgb, wl), glo.rgb, wx);
   let w = max(max(wg * wl, wc), 0.0);
   let base = tier;
   let f = fl.xy;
@@ -304,6 +314,7 @@ fn mixAt(uv: vec2f) -> Made {
   m.rgb = mix(base, near, w);
   m.w = w;
   m.f = f;
+  m.x = wx;
   return m;
 }
 `;
@@ -322,6 +333,7 @@ fn fs(in: VOut) -> @location(0) vec4f {
     o = mix(o * 0.45, hue(ang), clamp(len / 6.0, 0.0, 1.0) * 0.8);
   } else if (pr.dbg > 0.5) {
     o = mix(o, vec3f(1.0, 0.1, 0.1), w * 0.85);
+    o = mix(o, vec3f(0.1, 0.4, 1.0), m.x * 0.6 * (1.0 - w));
   }
   if (pr.dbg > 2.5) { o = vec3f(w); }
   return vec4f(o, 1.0);
