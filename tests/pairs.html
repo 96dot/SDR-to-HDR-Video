@@ -1,0 +1,102 @@
+<!doctype html>
+<meta charset="utf-8">
+<title>Headroom HDR: frame pair test page</title>
+<!-- Loads the extension's own shader.js, interp.js and capture.js into a plain page, so that saved frames (Alt+Shift+C) can be run through the real smooth-motion passes in a headless browser (see pairs.mjs). -->
+<script src="../shader.js"></script>
+<script src="../interp.js"></script>
+<script src="../capture.js"></script>
+<script>
+async function setup() {
+  const adapter = await navigator.gpu.requestAdapter();
+  const device = await adapter.requestDevice();
+  const make = (code, format) => {
+    const module = device.createShaderModule({ code });
+    return device.createRenderPipelineAsync({ layout: 'auto', vertex: { module, entryPoint: 'vsFull' }, fragment: { module, entryPoint: 'fs', targets: [{ format }] }, primitive: { topology: 'triangle-strip' } });
+  };
+  const [down1, down] = await Promise.all([make(SDR2HDR_DOWN1, 'rgba16float'), make(SDR2HDR_DOWN, 'rgba16float')]);
+  const gpu = { device, sampler: device.createSampler({ magFilter: 'linear', minFilter: 'linear' }), down1, down };
+  const pipes = await sdr2hdrInterpPipelines(device);
+  return { gpu, pipes };
+}
+window.ready = setup().then((s) => { window.S = s; return true; });
+
+const b64 = (bytes) => { let s = ''; for (let i = 0; i < bytes.length; i += 0x8000) s += String.fromCharCode(...bytes.subarray(i, i + 0x8000)); return btoa(s); };
+const unb64 = (s) => Uint8Array.from(atob(s), (c) => c.charCodeAt(0));
+
+// Two saved pictures (base64 PNG) and the times t to make: returns the stats
+// and, for each t, the picture made, where it fell back (red) and the motion
+// found, as base64 PNGs.
+window.runPair = async (aPng, bPng, ts, maxW = 1920) => {
+  const { gpu, pipes } = S;
+  const { device } = gpu;
+  const usage = GPUTextureUsage.RENDER_ATTACHMENT | GPUTextureUsage.TEXTURE_BINDING | GPUTextureUsage.COPY_SRC | GPUTextureUsage.COPY_DST;
+  const keep = [];
+  let motion = null;
+  const buf = (size) => { const b = device.createBuffer({ size, usage: GPUBufferUsage.MAP_READ | GPUBufferUsage.COPY_DST }); keep.push(b); return b; };
+  try {
+    const load = async (s) => {
+      const bmp = await createImageBitmap(new Blob([unb64(s)], { type: 'image/png' }), { colorSpaceConversion: 'none', premultiplyAlpha: 'none' });
+      const tex = device.createTexture({ size: [bmp.width, bmp.height], format: SDR2HDR_FRAME_FORMAT, usage });
+      keep.push(tex);
+      device.queue.copyExternalImageToTexture({ source: bmp }, { texture: tex }, [bmp.width, bmp.height]);
+      const view = tex.createView();
+      bmp.close();
+      return { tex, view, bgDown1: device.createBindGroup({ layout: gpu.down1.getBindGroupLayout(0), entries: [{ binding: 0, resource: gpu.sampler }, { binding: 1, resource: view }] }) };
+    };
+    const A = await load(aPng), B = await load(bPng);
+    const W = A.tex.width, H = A.tex.height;
+    if (B.tex.width !== W || B.tex.height !== H) throw new Error('the two pictures are not the same size');
+    const [FW, FH] = SDR2HDR_FLOW_LEVELS[0];
+    const row = Math.ceil(W * 4 / 256) * 256;
+    motion = new Sdr2hdrMotion(gpu, pipes);
+    // the motion work, as the page does it for each pair
+    const enc = device.createCommandEncoder();
+    motion.advance(enc, A);
+    const flowed = motion.advance(enc, B);
+    const M = { tex: device.createTexture({ size: [W, H], format: SDR2HDR_FRAME_FORMAT, usage }) };
+    keep.push(M.tex);
+    M.view = M.tex.createView();
+    // the statistics, taken at the halfway picture like the report's
+    motion.mix(enc, A, B, 0.5, M, 0);
+    motion.stat(enc, A, B);
+    const cbuf = buf(256), gbuf = buf(256), wbuf = buf(256);
+    enc.copyTextureToBuffer({ texture: motion.cut.tex }, { buffer: cbuf, bytesPerRow: 256 }, [1, 1]);
+    enc.copyTextureToBuffer({ texture: motion.glob.tex }, { buffer: gbuf, bytesPerRow: 256 }, [1, 1]);
+    enc.copyTextureToBuffer({ texture: motion.wstat.tex }, { buffer: wbuf, bytesPerRow: 256 }, [1, 1]);
+    device.queue.submit([enc.finish()]);
+    await Promise.all([cbuf, gbuf, wbuf].map((b) => b.mapAsync(GPUMapMode.READ)));
+    const ch = new Uint16Array(cbuf.getMappedRange().slice(0, 8));
+    const gh = new Uint16Array(gbuf.getMappedRange().slice(0, 8));
+    const stats = {
+      size: [W, H],
+      flowed,
+      // see SDR2HDR_CUT: the picture's mean mismatch at the coarse level, the fastest motion (pixels of the flow grid), the mean mismatch at the fine level
+      cutCoarse: sdr2hdrHalf(ch[0]), fastestPx: sdr2hdrHalf(ch[1]), cutFine: sdr2hdrHalf(ch[2]),
+      // the overall motion the mix falls back on, in pixels of the flow grid
+      globalFlow: [sdr2hdrHalf(gh[0]) * FW, sdr2hdrHalf(gh[1]) * FH],
+      // the share of the halfway picture that fell back to the plain frame
+      fellShare: sdr2hdrHalf(new Uint16Array(wbuf.getMappedRange().slice(0, 8))[0]),
+    };
+    const images = [];
+    for (const t of ts) {
+      for (const [name, dbg] of [['mid', 0], ['fallback', 1], ['motion', 2]]) {
+        // each picture is made and read on its own: the mix's settings are written ahead of the submit
+        const e = device.createCommandEncoder();
+        motion.mix(e, A, B, t, M, dbg);
+        const b = buf(row * H);
+        e.copyTextureToBuffer({ texture: M.tex }, { buffer: b, bytesPerRow: row }, [W, H]);
+        device.queue.submit([e.finish()]);
+        await b.mapAsync(GPUMapMode.READ);
+        const rgba = sdr2hdrFrameToRgba(new Uint32Array(b.getMappedRange().slice(0)), W, H, row);
+        b.unmap();
+        const png = await sdr2hdrPng(rgba, W, H, maxW);
+        images.push({ name: `${name}-t${Math.round(t * 100)}.png`, png: b64(png.bytes) });
+      }
+    }
+    return { stats, images };
+  } finally {
+    if (motion) motion.destroy();
+    for (const x of keep) x.destroy();
+  }
+};
+</script>

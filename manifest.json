@@ -73,6 +73,7 @@
         "diag.js",
         "pacer.js",
         "cue.js",
+        "capture.js",
         "content.js"
       ],
       "all_frames": true,

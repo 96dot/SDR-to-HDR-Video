@@ -1637,7 +1637,8 @@
       const g = this.gpu;
       const tex = g.device.createTexture({
         size: [w, h], format: SDR2HDR_FRAME_FORMAT,
-        usage: GPUTextureUsage.RENDER_ATTACHMENT | GPUTextureUsage.TEXTURE_BINDING,
+        // COPY_SRC: so that a frame can be saved to a file (see saveStart).
+        usage: GPUTextureUsage.RENDER_ATTACHMENT | GPUTextureUsage.TEXTURE_BINDING | GPUTextureUsage.COPY_SRC,
       });
       const view = tex.createView();
       return {
@@ -1861,6 +1862,95 @@
       if (!sl) return;
       this.seenTs = ts;
       this.queue.push(sl);
+      if (this.save) this.saveTake(sl, ts);
+    }
+
+    // Alt+Shift+C (with Stats on): save four frames in a row, exactly as the
+    // converter holds them, with a note of the sizes and times and the report,
+    // as one zip in Downloads (see capture.js). The frames are read back from
+    // the GPU as they are copied, so they are real consecutive frames, and
+    // nothing is sent anywhere. Returns why not, or '' if it started.
+    saveStart() {
+      if (this.save) return 'already saving';
+      if (this.dead || !this.slots || this.video.paused) return 'the video has to be playing';
+      const job = { frames: [], need: 4, timer: 0 };
+      // Four frames take a fraction of a second; this is for a video that
+      // stalls or stops.
+      job.timer = setTimeout(() => this.saveEnd('not enough new frames came in (is the video still playing?)'), 8000);
+      this.save = job;
+      return '';
+    }
+
+    // Called with each frame as it is copied (see check): read it back.
+    saveTake(sl, ts) {
+      const job = this.save;
+      if (!job || job.frames.length >= job.need) return;
+      const { device } = this.gpu;
+      const w = sl.tex.width, h = sl.tex.height;
+      const rowBytes = Math.ceil(w * 4 / 256) * 256;
+      try {
+        const buf = device.createBuffer({ size: rowBytes * h, usage: GPUBufferUsage.COPY_DST | GPUBufferUsage.MAP_READ });
+        const enc = device.createCommandEncoder();
+        enc.copyTextureToBuffer({ texture: sl.tex }, { buffer: buf, bytesPerRow: rowBytes }, [w, h]);
+        device.queue.submit([enc.finish()]);
+        job.frames.push({ buf, ts, w, h, rowBytes });
+      } catch (e) {
+        this.saveEnd(`a frame could not be read back (${e.name}: ${e.message})`);
+        return;
+      }
+      if (job.frames.length === job.need) this.saveFinish(job);
+    }
+
+    // The job is over, or given up: let go of what it held.
+    saveEnd(why = '') {
+      const job = this.save;
+      if (!job) return;
+      this.save = null;
+      clearTimeout(job.timer);
+      for (const fr of job.frames) { try { fr.buf.destroy(); } catch {} }
+      if (why) note(`${nameOf(this.video)}: frames not saved, because ${why}`);
+    }
+
+    async saveFinish(job) {
+      clearTimeout(job.timer);
+      const v = this.video;
+      try {
+        const files = [];
+        for (let i = 0; i < job.frames.length; i++) {
+          const fr = job.frames[i];
+          await fr.buf.mapAsync(GPUMapMode.READ);
+          const rgba = sdr2hdrFrameToRgba(new Uint32Array(fr.buf.getMappedRange()), fr.w, fr.h, fr.rowBytes);
+          fr.buf.unmap();
+          const png = await sdr2hdrPng(rgba, fr.w, fr.h, 1920);
+          files.push({ name: `frame${i + 1}.png`, data: png.bytes });
+        }
+        const info = {
+          what: 'Frames saved by Headroom HDR (Alt+Shift+C), as the converter held them, in order',
+          version: chrome.runtime.getManifest().version,
+          site: location.hostname,
+          saved: new Date().toISOString(),
+          videoSize: [v.videoWidth, v.videoHeight],
+          frameSize: [job.frames[0].w, job.frames[0].h],
+          savedSize: files.length ? [Math.min(job.frames[0].w, 1920), Math.round(job.frames[0].h * Math.min(1, 1920 / job.frames[0].w))] : null,
+          srcFps: this.srcFps || null,
+          refreshMs: this.tickMs || null,
+          playbackRate: v.playbackRate,
+          frameTimestampsUs: job.frames.map((fr) => fr.ts),
+          settings: { perf: settings.perf, upscale: settings.upscale, interp: settings.interp, method: settings.method, sharpen: settings.sharpen, peak: settings.peak },
+        };
+        const enc = new TextEncoder();
+        files.push({ name: 'info.json', data: enc.encode(JSON.stringify(info, null, 2)) });
+        let text = '';
+        try { text = buildReport(0); } catch (e) { text = `(no report: ${e.name}: ${e.message})`; }
+        files.push({ name: 'report.txt', data: enc.encode(text) });
+        const d = new Date(), p = (n) => String(n).padStart(2, '0');
+        const host = location.hostname.replace(/[^a-z0-9.-]/gi, '_').slice(0, 40) || 'page';
+        sdr2hdrDownload(sdr2hdrZip(files, d), `headroom-frames-${host}-${d.getFullYear()}${p(d.getMonth() + 1)}${p(d.getDate())}-${p(d.getHours())}${p(d.getMinutes())}${p(d.getSeconds())}.zip`);
+        note(`${nameOf(v)}: ${files.length - 2} frames saved to a zip in Downloads`);
+        this.saveEnd();
+      } catch (e) {
+        this.saveEnd(`${e.name}: ${e.message}`);
+      }
     }
 
     // Once per screen refresh while playing: keep the pacing and the asking
@@ -2644,6 +2734,7 @@
       // Written to cope with a session that never finished setting up, where
       // some of these don't exist yet.
       clearTimeout(this.badgeTimer);
+      this.saveEnd('the video stopped being converted');
       if (this.raf) cancelAnimationFrame(this.raf);
       clearTimeout(this.mid);
       if (this.onPlaying) this.video.removeEventListener('playing', this.onPlaying);
@@ -2892,6 +2983,15 @@
     interpView = (interpView + 1) % INTERP_VIEWS.length;
     note(`smooth motion view: ${INTERP_VIEWS[interpView]}`);
     for (const s of sessions.values()) { s.updateBadge(); s.refresh(); }
+  }, true);
+  // ... and Alt+Shift+C saves four frames in a row to a zip (see saveStart).
+  window.addEventListener('keydown', (e) => {
+    if (!e.isTrusted || !settings.stats || !e.altKey || !e.shiftKey || e.code !== 'KeyC' || e.repeat) return;
+    e.preventDefault();
+    e.stopImmediatePropagation();
+    const s = [...sessions.values()].find((x) => !x.dead && !x.video.paused);
+    const why = s ? s.saveStart() : 'no video is being converted and playing';
+    note(why ? `saving frames: not started, ${why}` : `${nameOf(s.video)}: saving four frames`);
   }, true);
   // With Stats on, Alt+Shift+A starts a test of pacing (see pacer.js): it is
   // switched off and on again in 30-second turns, so a few minutes of playing
