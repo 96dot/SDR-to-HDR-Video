@@ -2,6 +2,23 @@
 
 All notable changes to Headroom HDR (called SDR to HDR Video before 0.11). Versions follow the number in `manifest.json`.
 
+## 1.2.4 - 2026-10-04
+
+### Changed
+
+- Files put back where the code and the README expect them. Nothing about how the extension works or how the picture looks changes; only the packaged icon does.
+  - The FSRCNNX shader files and their licence texts (`COPYING`, `COPYING.LESSER`) are in `third_party/fsrcnnx/`, with their notice, unchanged. They had been uploaded to the top level, where the Best upscaler (`upnet.js`, `background.js`) could not find them.
+  - `README.md` is the Headroom HDR README again; the FSRCNNX notice had overwritten it, leaving the real one as `README (1).md`.
+  - The README's screenshots are in `docs/`, where it points to them.
+  - The packaged icon (`icons/icon16.png` to `icon128.png`) is the blue "H" artwork that had been uploaded to the top level. The extensions page and the store listing now show it; the toolbar icon still follows the chosen theme. The old purple-sun PNGs are gone.
+  - The two old popup screenshots (`popup-dark.png`, `popup-light.png`, in two places) are removed. Nothing used them.
+  - The uploaded `download` file is `.gitignore`, and the two `icon` SVGs that were copied at the top level (identical to the ones in `icons/`) are removed.
+
+### Tested, and not
+
+- Checked here: every path named in `manifest.json`, `upnet.js`, `background.js` and the README points at a file that exists, and the two shader files are byte-for-byte what they were.
+- Not checked: loading the Best upscaler in a browser. It reads the same files from a different folder.
+
 ## 1.2.3 - 2026-10-04
 
 ### Changed
