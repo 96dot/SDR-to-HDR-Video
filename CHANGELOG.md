@@ -2,6 +2,25 @@
 
 All notable changes to Headroom HDR (called SDR to HDR Video before 0.11). Versions follow the number in `manifest.json`.
 
+## 1.3.10 - 2026-10-04
+
+Nothing in the extension changed; this is the checking kit again.
+
+### Added
+
+- **`tests/general/check-project.mjs`**: a general version of the checks, one file, no dependencies (Node 18 or later), for any project. It works out what the project is and runs what applies: git (uncommitted or unpushed work), syntax (JavaScript, JSON, Python, shell, TypeScript), lint (eslint, ruff or flake8), a `package.json`'s lint, typecheck and test scripts, pytest or unittest, `go vet` and `go test`, `cargo check` and `cargo test`, a browser extension's manifest (every file it names, the version against the changelog), links between Markdown files, secrets left in files (private keys, cloud and API tokens, passwords in URLs) and files over 5 MB. Anything it cannot run says SKIP and why. `--quick`, `--build`, `--json`, `--only` and `--skip` choose what runs; the exit code is 1 if anything failed.
+- **`.checks.json`**: a project's own checks in the same run: files that must exist, shell commands, and pairs of places that must be kept the same by hand (a regex for each; the first capture group is compared). This repository's wires in `tests/check-all.mjs`.
+- **`tests/general/GENERAL-CHECKS.md`**: the procedure for any project and any chat, with a paragraph to paste at the start of a chat, generic prompts for the three reviews, and how to verify, run it for real and report.
+
+### Found and not changed
+
+- It is a first pass, not a full linter: the secret patterns catch well-known shapes (not a random password in a config), the Markdown link check ignores links to web pages, and a project with unusual tooling needs `.checks.json`.
+
+### Tested, and not
+
+- Checked here: on this repository; on a small Python project (it caught an unused import with ruff, ran pytest); on a Node project broken on purpose (a bad JSON file, a failing test, a key left in a file, a broken link, two files that should match and did not, a custom command that exits 3: each reported, exit code 1); on an empty folder (everything SKIP, nothing passes by not running); the `--only`, `--skip`, `--quick` and `--json` options.
+- Not checked: Go and Rust projects (no toolchain here; they SKIP), TypeScript (no local `tsc` in the test projects), yarn or pnpm, Windows.
+
 ## 1.3.9 - 2026-10-04
 
 Nothing in the extension changed; this is the checking kit.

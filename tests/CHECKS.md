@@ -2,6 +2,8 @@
 
 For future sessions (and Jones). A **major update** is any substantial engine work or new feature. Small fixes, theme or layout tweaks and doc corrections only need the light checks (syntax check on every `.js`, a test of the change where one is possible, changelog and version). The rules behind this are in `CLAUDE.md`; this file is the how.
 
+(A general version of this procedure and script, for any project, is in `tests/general/`.)
+
 The order matters. Tell the owner **once, at the end**, when every part is done. Not after each part.
 
 ## 1. Run the script
