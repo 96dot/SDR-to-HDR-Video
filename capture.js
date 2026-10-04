@@ -5,10 +5,11 @@
 // saves to Downloads. Nothing is sent anywhere: the zip is made here, in the
 // page, and what happens to it after that is for its owner to decide.
 //
-// This file is the part that is not about the page: turning the frames into
-// pictures (PNG), the zip, and the little pass that shrinks a picture for the
-// recorder (Alt+Shift+R: the last second of what was put on screen). The
-// frames are read back from the GPU in content.js.
+// This file holds what needs no page: turning frames into pictures (PNG), the
+// zip, and the one small shader pass that shrinks a picture for the recorder
+// (Alt+Shift+R: the last pictures put on screen); that pass uses the shared
+// part of the shaders in shader.js, loaded before it. The frames are read
+// back from the GPU in content.js.
 
 // The CRC-32 that a zip keeps for each file.
 const SDR2HDR_CRC_TABLE = (() => {
@@ -74,8 +75,10 @@ function sdr2hdrFrameToRgba(words, w, h, rowBytes) {
   return out;
 }
 
-// Shrinks a picture to the size of the target: four bilinear taps spread over
-// the target texel, which is enough for pictures to look at.
+// Shrinks a picture to the size of the target. A picture that is not being
+// made smaller is copied as it is; otherwise four bilinear taps near the
+// middle of the target texel, which is not a proper box filter (it will alias
+// on fine detail when the picture is shrunk a lot) but is enough to look at.
 const SDR2HDR_SHRINK = SDR2HDR_COMMON + /* wgsl */ `
 @group(0) @binding(0) var samp: sampler;
 @group(0) @binding(1) var src: texture_2d<f32>;
@@ -83,6 +86,9 @@ const SDR2HDR_SHRINK = SDR2HDR_COMMON + /* wgsl */ `
 @fragment
 fn fs(in: VOut) -> @location(0) vec4f {
   let px = vec2f(abs(dpdx(in.uv.x)), abs(dpdy(in.uv.y)));
+  if (f32(textureDimensions(src).x) * px.x < 1.01) {
+    return vec4f(textureSampleLevel(src, samp, in.uv, 0.0).rgb, 1.0);
+  }
   var acc = vec3f(0.0);
   for (var j = 0; j < 2; j++) {
     for (var i = 0; i < 2; i++) {

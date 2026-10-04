@@ -13,4 +13,6 @@ Checks that run in headless Chromium or in plain Node. They need no extension in
 
 `interp.test.mjs`, `pairs.test.mjs` and `pairs.mjs` need Playwright and a Chromium. It looks for them in the usual places; set `PLAYWRIGHT_MODULE` and `CHROME` to point at them if they are elsewhere. It serves `tests/interp.html` (which loads `shader.js` and `interp.js` as plain scripts) from a local server on 127.0.0.1 while it runs.
 
+The recorder (Alt+Shift+R) and its shrink pass are not covered by an automated test: they were run end to end in headless Chromium by hand (a real key press, the zip checked), and need a screen that refreshes fast enough for Smooth motion to turn on, which the software GPU does not.
+
 These do not replace trying the extension on real video: how smooth playback is and how the picture looks can only be judged on a real display.

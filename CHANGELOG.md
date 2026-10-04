@@ -2,6 +2,33 @@
 
 All notable changes to Headroom HDR (called SDR to HDR Video before 0.11). Versions follow the number in `manifest.json`.
 
+## 1.3.7 - 2026-10-04
+
+### Added
+
+- **A recorder of what was actually put on screen (Alt+Shift+R, Stats on).** Your screen recordings could not show the made-up pictures (a 30 fps recording only catches every other refresh, and the 60 fps clip repeated every picture). Now the first press turns a recorder on (it needs Smooth motion to be making up pictures); it keeps the last 60 pictures that were drawn, each shrunk to 800 wide at most, and a line for every refresh that drew: what kind of picture (the earlier frame, the later frame, or a made-up one and how far between), the frame times either side, and the gap since the last refresh. A second press, just after you see a glitch, saves them as a zip in Downloads (the pictures in order, `shown.txt`, `info.json`, the report). Nothing is sent anywhere, no new permission. It holds about 90 MB of GPU memory at 800x450 while on (the size is capped for tall pictures too), turns itself off after ten minutes unused, and says in `shown.txt` how old the newest picture was if Smooth motion has stopped since.
+- The pictures are what Smooth motion drew (the made-up ones as they were made, the real frames as they were copied), before the colour pass, so they look like the SDR picture, not the HDR one.
+
+### Changed
+
+- The frame saver (Alt+Shift+C) and the recorder now finish through one piece of code (the info file, the report, the zip name and the download), so the two cannot drift apart.
+
+### Found and fixed in review
+
+- The recorder's memory had no cap for a tall picture; the size is now limited in both directions. A picture that is not being made smaller is copied exactly (it was slightly blurred by the shrinking pass). The log keeps four times as many lines as there are pictures, so the log does not run out before the pictures do. Comments and `shown.txt` say "refreshes that drew", not "the last second" (it is a second only at 60 Hz).
+
+### Found and not changed
+
+- The recorder stays on after a save, until ten minutes pass, so another glitch can be caught; it holds the GPU memory meanwhile.
+- If Smooth motion stops while it is on, it stays on and records nothing new; a save says so.
+- The shrinking pass is four taps near the middle of each target pixel, not a proper box filter: at 4K it will alias on fine detail. Good enough to look at.
+- With two videos converting, it records the first one that is making up pictures.
+
+### Tested, and not
+
+- Checked here: in headless Chromium (software GPU, with a test build that does not give up for being slow) a real key press turns it on, a second one saves a zip whose pictures are right (real and made-up, in order, with the log naming each), a made-up key press does nothing, and a 1080p source is shrunk correctly; the frame saver still works after sharing code; every earlier test passes.
+- Not checked: on your card. Memory use at 4K; whether Brave asks about the download; and, above all, what the pictures show: whether the glitch you saw is in a made-up picture or in the order they were shown.
+
 ## 1.3.6 - 2026-10-04
 
 ### Added

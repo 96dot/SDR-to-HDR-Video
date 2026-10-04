@@ -395,10 +395,11 @@
   const SAVE_FRAMES = 4;
   const SAVE_MAX_W = 1920;
   const SAVE_MAX_BYTES = 256 * 1024 * 1024;
-  // The recorder (Alt+Shift+R, see recStart): how many screen refreshes of
-  // pictures it keeps (a second at 60 Hz), how wide they are kept, and how
-  // long it stays on without being used.
+  // The recorder (Alt+Shift+R, see recStart): how many pictures it keeps (a
+  // second's worth at 60 Hz), how long its log of refreshes is, the most a
+  // picture is kept wide or tall, and how long it stays on unused.
   const REC_KEEP = 60;
+  const REC_LOG = REC_KEEP * 4;
   const REC_MAX_W = 800;
   const REC_MINUTES = 10;
   const INTERP_VIEWS = ['normal', 'fallback in red', 'the motion found'];
@@ -1933,9 +1934,32 @@
       if (why) note(`${nameOf(this.video)}: frames not saved, because ${why}`);
     }
 
+    // Both savers end the same way: an info file (what the saver adds to the
+    // common facts), the report, one zip, one download.
+    finishZip(prefix, files, extra) {
+      const v = this.video;
+      const enc = new TextEncoder();
+      const info = {
+        ...extra,
+        version: chrome.runtime.getManifest().version,
+        site: location.hostname,
+        saved: new Date().toISOString(),
+        videoSize: [v.videoWidth, v.videoHeight],
+        srcFps: this.srcFps || null,
+        refreshMs: this.tickMs || null,
+        playbackRate: v.playbackRate,
+        settings: { perf: settings.perf, upscale: settings.upscale, interp: settings.interp, method: settings.method, sharpen: settings.sharpen, peak: settings.peak },
+      };
+      let report = '';
+      try { report = buildReport(0); } catch (e) { report = `(no report: ${e.name}: ${e.message})`; }
+      files.push({ name: 'info.json', data: enc.encode(JSON.stringify(info, null, 2)) }, { name: 'report.txt', data: enc.encode(report) });
+      const d = new Date(), p = (n) => String(n).padStart(2, '0');
+      const host = location.hostname.replace(/[^a-z0-9.-]/gi, '_').slice(0, 40) || 'page';
+      sdr2hdrDownload(sdr2hdrZip(files, d), `headroom-${prefix}-${host}-${d.getFullYear()}${p(d.getMonth() + 1)}${p(d.getDate())}-${p(d.getHours())}${p(d.getMinutes())}${p(d.getSeconds())}.zip`);
+    }
+
     async saveFinish(job) {
       clearTimeout(job.timer);     // what is left is a finite job, not a stalled video
-      const v = this.video;
       try {
         const files = [];
         let size = null;
@@ -1948,29 +1972,13 @@
           size = [png.w, png.h];
           files.push({ name: `frame${i + 1}.png`, data: png.bytes });
         }
-        const info = {
+        this.finishZip('frames', files, {
           what: 'Frames saved by Headroom HDR (Alt+Shift+C), as the converter held them, in order',
-          version: chrome.runtime.getManifest().version,
-          site: location.hostname,
-          saved: new Date().toISOString(),
-          videoSize: [v.videoWidth, v.videoHeight],
           frameSize: [job.frames[0].w, job.frames[0].h],
           savedSize: size,
-          srcFps: this.srcFps || null,
-          refreshMs: this.tickMs || null,
-          playbackRate: v.playbackRate,
           frameTimestampsUs: job.frames.map((fr) => fr.ts),
-          settings: { perf: settings.perf, upscale: settings.upscale, interp: settings.interp, method: settings.method, sharpen: settings.sharpen, peak: settings.peak },
-        };
-        const enc = new TextEncoder();
-        files.push({ name: 'info.json', data: enc.encode(JSON.stringify(info, null, 2)) });
-        let text = '';
-        try { text = buildReport(0); } catch (e) { text = `(no report: ${e.name}: ${e.message})`; }
-        files.push({ name: 'report.txt', data: enc.encode(text) });
-        const d = new Date(), p = (n) => String(n).padStart(2, '0');
-        const host = location.hostname.replace(/[^a-z0-9.-]/gi, '_').slice(0, 40) || 'page';
-        sdr2hdrDownload(sdr2hdrZip(files, d), `headroom-frames-${host}-${d.getFullYear()}${p(d.getMonth() + 1)}${p(d.getDate())}-${p(d.getHours())}${p(d.getMinutes())}${p(d.getSeconds())}.zip`);
-        note(`${nameOf(v)}: ${job.frames.length} frames saved to a zip in Downloads`);
+        });
+        note(`${nameOf(this.video)}: ${job.frames.length} frames saved to a zip in Downloads`);
         this.saveEnd();
       } catch (e) {
         this.saveEnd(`${e.name}: ${e.message}`);
@@ -1978,31 +1986,45 @@
     }
 
     // Alt+Shift+R (with Stats on, while Smooth motion is making up pictures):
-    // the first press turns the recorder on, which keeps the last REC_KEEP
-    // pictures that were put on screen (each shrunk to REC_MAX_W wide) and a
-    // line for every refresh saying what it was and when. Pressing it again,
-    // just after a glitch is seen, saves them with the report as a zip in
-    // Downloads (recSave). The pictures are what Smooth motion drew, before
-    // the picture's colour is made: the made-up ones as they were made, and
-    // the real frames as they were copied. Nothing is sent anywhere. It turns
-    // itself off after REC_MINUTES, or when the video stops being converted.
+    // the first press turns the recorder on. It keeps the last REC_KEEP
+    // pictures that were put on screen (each shrunk to REC_MAX_W wide; a
+    // second's worth at 60 Hz) and a line for every refresh that drew,
+    // saying what it was and when. Pressing it again, just after a glitch is
+    // seen, saves them with the report as a zip in Downloads (recSave).
+    // The pictures are what Smooth motion drew, before the picture's colour
+    // is made: the made-up ones as they were made, and the real frames as
+    // they were copied. Nothing is sent anywhere. It turns itself off
+    // REC_MINUTES after it was turned on or last saved, or when the video
+    // stops being converted. If Smooth motion stops meanwhile it stays on
+    // (nothing new is recorded) and a save says how old the newest picture is.
     // Returns why not, or '' if it started.
     recStart() {
       if (this.rec) return 'already on';
       if (this.dead || !this.slots) return 'no picture to record yet';
       const g = this.gpu;
       const t = this.slots[0].tex;
-      const w = Math.min(t.width, REC_MAX_W), h = Math.max(16, Math.round(t.height * w / t.width));
+      // No wider than REC_MAX_W, no taller than REC_MAX_W either (a picture
+      // standing on its end would otherwise be huge), 16 at least.
+      const k = Math.min(1, REC_MAX_W / t.width, REC_MAX_W / t.height);
+      const w = Math.max(16, Math.round(t.width * k)), h = Math.max(16, Math.round(t.height * k));
       try {
         if (!g.shrink) g.shrink = sdr2hdrShrinkPipeline(g.device);
         const tex = Array.from({ length: REC_KEEP }, () => g.device.createTexture({
           size: [w, h], format: SDR2HDR_FRAME_FORMAT, usage: GPUTextureUsage.RENDER_ATTACHMENT | GPUTextureUsage.COPY_SRC,
         }));
-        this.rec = { w, h, tex, images: 0, log: [], last: 0, saving: false, timer: setTimeout(() => this.recStop(`${REC_MINUTES} minutes went by`), REC_MINUTES * 60000) };
+        this.rec = { w, h, tex, images: 0, log: [], last: 0, saving: false, timer: 0 };
+        this.recArm();
       } catch (e) {
         return `${e.name}: ${e.message}`;
       }
       return '';
+    }
+
+    // (Re)start the clock that turns the recorder off if it is forgotten.
+    recArm() {
+      const r = this.rec;
+      clearTimeout(r.timer);
+      r.timer = setTimeout(() => this.recStop(`${REC_MINUTES} minutes went by`), REC_MINUTES * 60000);
     }
 
     recStop(why = '') {
@@ -2014,15 +2036,17 @@
       if (why) note(`${nameOf(this.video)}: recorder off, because ${why}`);
     }
 
-    // Called for each refresh that put something on screen (see presentInterp):
-    // what kind of picture it was, how far through the gap between two frames
-    // (t), the frames either side, and src, the texture that was drawn from
-    // (null when the picture on screen was left as it was).
+    // Called for each refresh that drew something (see presentInterp): what
+    // kind of picture it was, how far through the gap between two frames
+    // (t: 0 for the earlier frame as it is, 1 for the later), the frames
+    // either side, and src, the texture that was drawn from (null when the
+    // picture on screen was left as it was).
     recTake(kind, t, prev, cur, src) {
       const r = this.rec;
       if (!r) return;
       const now = performance.now();
-      const e = { gap: r.last ? now - r.last : 0, kind, t: Number.isFinite(t) ? t : (kind === 'cur' ? 1 : 0), prevTs: prev ? prev.ts : null, curTs: cur ? cur.ts : null, img: -1 };
+      // img: the running number of the picture kept for it, or -1 for none.
+      const entry = { gap: r.last ? now - r.last : 0, kind, t, prevTs: prev ? prev.ts : null, curTs: cur ? cur.ts : null, img: -1 };
       r.last = now;
       if (src) {
         try {
@@ -2036,28 +2060,30 @@
           rp.draw(4);
           rp.end();
           g.device.queue.submit([enc.finish()]);
-          e.img = r.images++;
+          entry.img = r.images++;
         } catch (err) {
           this.recStop(`${err.name}: ${err.message}`);
           return;
         }
       }
-      r.log.push(e);
-      if (r.log.length > REC_KEEP * 2) r.log.shift();
+      r.log.push(entry);
+      // Refreshes that left the picture as it was keep no picture, so the log
+      // runs back further than the pictures do.
+      if (r.log.length > REC_LOG) r.log.shift();
     }
 
     // The second press: read back what is kept and make the zip. Resolves
-    // to why not, or '' when it was saved.
+    // to why not, or '' when it was saved (the handler says which).
     async recSave() {
       const r = this.rec;
       if (!r) return 'the recorder is not on';
       if (r.saving) return 'already saving';
-      const first = Math.max(0, r.images - REC_KEEP);
-      if (r.images === first) return 'nothing has been put on screen since it was turned on';
+      if (!r.images) return 'nothing has been put on screen since it was turned on';
       r.saving = true;
-      clearTimeout(r.timer);
-      r.timer = setTimeout(() => this.recStop(`${REC_MINUTES} minutes went by`), REC_MINUTES * 60000);
-      const log = r.log.map((e) => ({ ...e }));
+      this.recArm();           // saving counts as use
+      const first = Math.max(0, r.images - REC_KEEP);
+      const log = r.log.map((entry) => ({ ...entry }));
+      const ageMs = performance.now() - r.last;
       const rowBytes = sdr2hdrRowBytes(r.w);
       const { device } = this.gpu;
       const bufs = [];
@@ -2069,43 +2095,43 @@
           enc.copyTextureToBuffer({ texture: r.tex[s % REC_KEEP] }, { buffer: buf, bytesPerRow: rowBytes }, [r.w, r.h]);
         }
         device.queue.submit([enc.finish()]);
-        const names = new Map();
+        const names = new Map();     // picture number -> file name
         const files = [];
-        let n = 0;
-        for (const { s, buf } of bufs) {
+        for (let k = 0; k < bufs.length; k++) {
+          const { s, buf } = bufs[k];
           await buf.mapAsync(GPUMapMode.READ);
           const rgba = sdr2hdrFrameToRgba(new Uint32Array(buf.getMappedRange()), r.w, r.h, rowBytes);
           buf.unmap();
           const png = await sdr2hdrPng(rgba, r.w, r.h, r.w);
-          const e = log.find((x) => x.img === s);
-          const name = `p${String(++n).padStart(2, '0')}-${e ? e.kind : 'picture'}${e && e.kind === 'mid' ? `-t${e.t.toFixed(2)}` : ''}.png`;
+          const entry = log.find((x) => x.img === s);
+          const kind = entry ? entry.kind : 'picture';       // no entry: the log has run back past it
+          const name = `p${String(k + 1).padStart(2, '0')}-${kind}${kind === 'mid' ? `-t${entry.t.toFixed(2)}` : ''}.png`;
           names.set(s, name);
           files.push({ name, data: png.bytes });
         }
-        const sec = (us) => (us == null ? '      -' : (us / 1e6).toFixed(4).padStart(7));
-        const rows = log.map((e, i) => `${String(i + 1).padStart(4)}  ${e.gap.toFixed(1).padStart(6)}  ${e.kind.padEnd(4)}  ${e.t.toFixed(2)}  ${sec(e.prevTs)}  ${sec(e.curTs)}  ${e.img >= first ? names.get(e.img) : (e.img >= 0 ? '(older than the kept pictures)' : '(left as it was)')}`);
+        const secs = (us) => (us == null ? '-' : (us / 1e6).toFixed(4));
+        const where = (entry) => {
+          if (entry.img < 0) return '(left as it was)';
+          return entry.img >= first ? names.get(entry.img) : '(older than the kept pictures)';
+        };
+        const cols = [['refresh', 7], ['gap ms', 7], ['kind', 5], ['t', 5], ['earlier', 8], ['later', 8]];
+        const rows = log.map((entry, i) => [i + 1, entry.gap.toFixed(1), entry.kind, entry.t.toFixed(2), secs(entry.prevTs), secs(entry.curTs)]
+          .map((v, c) => String(v).padStart(cols[c][1])).join(' ') + `  ${where(entry)}`);
         const text = [
-          `What was put on screen at each of the last ${log.length} refreshes (oldest first), as the page chose it. A refresh's picture is a real frame (prev, cur) or one made up (mid, t is how far from the earlier frame to the later one).`,
-          `Frame times are seconds into the video. Pictures are ${r.w}x${r.h}.`,
+          `What was put on screen at each of the last ${log.length} refreshes that drew (oldest first), as the page chose it. Its picture is a real frame (prev: the earlier one, cur: the later one) or one made up between them (mid; t is how far from the earlier frame to the later one).`,
+          `Frame times are seconds into the video. Pictures are ${r.w}x${r.h}. The newest picture was drawn ${(ageMs / 1000).toFixed(1)} s before the key was pressed${this.ipOn ? '' : ' (smooth motion is not making up pictures now)'}.`,
           '',
-          'refresh   gap ms  kind  t     earlier  later    picture',
+          `${cols.map((c) => c[0].padStart(c[1])).join(' ')}  picture`,
           ...rows,
         ].join('\n');
         files.push({ name: 'shown.txt', data: new TextEncoder().encode(text) });
-        const v = this.video;
-        files.push({ name: 'info.json', data: new TextEncoder().encode(JSON.stringify({
+        this.finishZip('shown', files, {
           what: 'What Headroom HDR put on screen just before Alt+Shift+R was pressed, with Smooth motion on',
-          version: chrome.runtime.getManifest().version, site: location.hostname, saved: new Date().toISOString(),
-          videoSize: [v.videoWidth, v.videoHeight], pictureSize: [r.w, r.h], srcFps: this.srcFps || null, refreshMs: this.tickMs || null,
-          playbackRate: v.playbackRate, interpView: INTERP_VIEWS[interpView],
-          settings: { perf: settings.perf, upscale: settings.upscale, interp: settings.interp, method: settings.method, sharpen: settings.sharpen, peak: settings.peak },
-        }, null, 2)) });
-        let report = '';
-        try { report = buildReport(0); } catch (e) { report = `(no report: ${e.name}: ${e.message})`; }
-        files.push({ name: 'report.txt', data: new TextEncoder().encode(report) });
-        const d = new Date(), p = (x) => String(x).padStart(2, '0');
-        const host = location.hostname.replace(/[^a-z0-9.-]/gi, '_').slice(0, 40) || 'page';
-        sdr2hdrDownload(sdr2hdrZip(files, d), `headroom-shown-${host}-${d.getFullYear()}${p(d.getMonth() + 1)}${p(d.getDate())}-${p(d.getHours())}${p(d.getMinutes())}${p(d.getSeconds())}.zip`);
+          pictureSize: [r.w, r.h],
+          newestPictureAgeMs: Math.round(ageMs),
+          smoothMotionRunningNow: !!this.ipOn,
+          interpView: INTERP_VIEWS[interpView],
+        });
         return '';
       } catch (e) {
         return `${e.name}: ${e.message}`;
@@ -3162,7 +3188,7 @@
   }, true);
   // ... and Alt+Shift+R is the recorder of what was put on screen: the first
   // press turns it on, the next one (just after a glitch is seen) saves the
-  // last second (see recStart).
+  // last pictures (see recStart).
   window.addEventListener('keydown', (e) => {
     if (!e.isTrusted || !settings.stats || !e.altKey || !e.shiftKey || e.code !== 'KeyR' || e.repeat) return;
     e.preventDefault();
@@ -3173,10 +3199,10 @@
     if (!s) { note('recorder: not started, smooth motion is not making up pictures on any video'); return; }
     if (!on) {
       const why = s.recStart();
-      note(why ? `recorder: not started, ${why}` : `${nameOf(s.video)}: recorder on, keeping the last second of what is put on screen; press Alt+Shift+R again just after a glitch to save it`);
+      note(why ? `recorder: not started, ${why}` : `${nameOf(s.video)}: recorder on, keeping the last ${REC_KEEP} pictures put on screen; press Alt+Shift+R again just after a glitch to save them`);
       return;
     }
-    note(`${nameOf(s.video)}: saving the last second of what was put on screen`);
+    note(`${nameOf(s.video)}: saving what was last put on screen`);
     s.recSave().then((why) => note(why ? `recorder: not saved, ${why}` : `${nameOf(s.video)}: saved to a zip in Downloads`));
   }, true);
   // With Stats on, Alt+Shift+A starts a test of pacing (see pacer.js): it is
