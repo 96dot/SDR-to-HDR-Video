@@ -2,6 +2,27 @@
 
 All notable changes to Headroom HDR (called SDR to HDR Video before 0.11). Versions follow the number in `manifest.json`.
 
+## 1.4.1 - 2026-10-22
+
+### Fixed
+
+- **The HDR badge sat in the wrong place on Reddit** (seen once the bubble of 1.3.11 was gone: the pill was halfway down the right edge of the player and cut off, instead of at the top right of the picture). Reddit centres its video with `top: 50%; left: 50%; transform: translate(-50%, -50%)`. The picture carried that transform, but the badge was placed from the video's own offsets, which are half a player away from where the video is seen. It is now placed from where the picture really is on screen, in the coordinates of the box it sits in; the split handle the same way. This has been wrong on any site that centres its video this way, in every version; the bubble was hiding it on Reddit.
+- Reproduced here with a player that centres its video with a transform: the badge was 148 px outside the right edge and 102 px too low; it is now 12 px in from the top right, as intended.
+
+### Added
+
+- A check for it in `tests/check-all.mjs --e2e`: the badge must be 12 px in from the top right of a video the page centres with a transform (it fails on 1.4.0 and passes now).
+
+### Found and not changed
+
+- The badge is placed when the player is sized or the video's size is known; if a page moves the video with a transform after that (a slide-in animation), the badge stays where it was until the next resize. The picture itself has always worked the same way.
+- A page that rotates the video, or scales the box the badge is placed in, is not accounted for.
+
+### Tested, and not
+
+- Checked here: the above, and all 19 checks of `node tests/check-all.mjs --e2e`.
+- Not checked: Reddit itself (a test page copies what its styles do), Brave on Windows.
+
 ## 1.4.0 - 2026-10-22
 
 ### Removed

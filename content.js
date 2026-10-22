@@ -1498,8 +1498,22 @@
       c.style.transform = isTop || cs.transform === 'none' ? '' : cs.transform;
       c.style.transformOrigin = cs.transformOrigin;
 
-      setImportant(b, 'left', (left + w - 12) + 'px');
-      setImportant(b, 'top', (top + 12) + 'px');
+      // The badge and the split handle are placed from where the canvas really
+      // is on screen, in the coordinates of the box they are placed in. A page
+      // may move the video with a transform (Reddit centres its player with
+      // top: 50% and translate(-50%, -50%)): the video's own offsets are then
+      // half a player away from where it is seen.
+      const seen = isTop ? null : c.getBoundingClientRect();
+      const origin = (el) => {
+        const p = el.offsetParent;
+        if (!seen || !p) return null;
+        if ((p === document.body || p === document.documentElement) && getComputedStyle(p).position === 'static') return [-scrollX, -scrollY];
+        const r = p.getBoundingClientRect();
+        return [r.left + p.clientLeft - p.scrollLeft, r.top + p.clientTop - p.scrollTop];
+      };
+      const bo = origin(b);
+      setImportant(b, 'left', (bo ? seen.right - bo[0] - 12 : left + w - 12) + 'px');
+      setImportant(b, 'top', (bo ? seen.top - bo[1] + 12 : top + 12) + 'px');
       setImportant(b, 'z-index', z || 'auto');
 
       // How the picture sits in the player's box: sx, sy are its size as a
@@ -1544,8 +1558,9 @@
 
       // Split handle sits on the line, halfway down the video.
       const kn = this.knob;
-      setImportant(kn, 'left', (left + w * (0.5 + (settings.splitPos - 0.5) * sx)) + 'px');
-      setImportant(kn, 'top', (top + h / 2) + 'px');
+      const ko = origin(kn);
+      setImportant(kn, 'left', (ko ? seen.left - ko[0] + seen.width * (0.5 + (settings.splitPos - 0.5) * sx) : left + w * (0.5 + (settings.splitPos - 0.5) * sx)) + 'px');
+      setImportant(kn, 'top', (ko ? seen.top - ko[1] + seen.height / 2 : top + h / 2) + 'px');
       setImportant(kn, 'z-index', z || 'auto');
       this.covers = c.isConnected && c.offsetWidth > 0 && c.offsetHeight > 0;
       this.syncHide();

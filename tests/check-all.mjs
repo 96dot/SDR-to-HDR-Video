@@ -205,6 +205,13 @@ if (!args.has('--e2e')) {
     const server = http.createServer((q, r) => {
       if (q.url.endsWith('.webm')) { r.setHeader('content-type', 'video/webm'); r.end(fs.readFileSync(path.join(tmp, 't.webm'))); return; }
       r.setHeader('content-type', 'text/html');
+      if (q.url.startsWith('/centred')) {
+        // A player that centres its video with a transform (Reddit's does): the video's own
+        // offsets are then half the player away from where it is seen.
+        r.end(`<body style="margin:0"><div style="position:relative;width:500px;height:300px;overflow:hidden;background:#222;margin:20px">
+          <video id=v muted autoplay loop src="/t.webm" style="position:absolute;top:50%;left:50%;transform:translate(-50%,-50%);width:320px;height:180px"></video></div>`);
+        return;
+      }
       if (q.url.startsWith('/hostile')) {
         // A player whose styles reach every div, span and svg beside the video, !important and all
         // (Reddit's did this to the badge in 1.3.10 and before).
@@ -253,6 +260,19 @@ if (!args.has('--e2e')) {
       const names = listing[1].split(',');
       const ok = listing[0] === 'None' && ['frame1.png', 'frame2.png', 'frame3.png', 'frame4.png', 'info.json', 'report.txt'].every((n) => names.includes(n));
       out(ok ? 'PASS' : 'FAIL', 'e2e: a real Alt+Shift+C saves four frames, the info and the report', listing[0] === 'None' ? `zip ok: ${listing[1]}` : listing.join(' | ').slice(0, 160));
+      // The badge must sit at the top right of the picture as it is seen, even when the page
+      // moves the video with a transform.
+      const centred = await ctx.newPage();
+      await centred.goto(`${url}/centred`);
+      await centred.bringToFront();
+      await centred.waitForTimeout(7000);
+      const where = await centred.evaluate(() => {
+        const b = document.querySelector('[data-sdr2hdr=badge]'), c = document.querySelector('[data-sdr2hdr=canvas]');
+        if (!b || !c) return null;
+        const x = b.getBoundingClientRect(), y = c.getBoundingClientRect();
+        return { right: Math.round(x.right - y.right), top: Math.round(x.top - y.top) };
+      });
+      out(where && Math.abs(where.right + 12) <= 2 && Math.abs(where.top - 12) <= 2 ? 'PASS' : 'FAIL', 'e2e: the badge sits 12 px in from the top right of a video the page centres with a transform', where ? `${where.right} px from the right edge, ${where.top} px from the top` : 'no badge');
       // The badge must stay a one-line pill at the top whatever the page's styles say (with Stats on it
       // is wide, with its numbers; the bug made it half the player tall).
       const hostile = await ctx.newPage();
