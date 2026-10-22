@@ -365,7 +365,7 @@
   // kept (wider ones are made smaller), and the biggest frame read back.
   const SAVE_FRAMES = 4;
   const SAVE_MAX_W = 1920;
-  const SAVE_MAX_BYTES = 256 * 1024 * 1024;
+  const SAVE_MAX_BYTES = 256 * 1024 * 1024;   // for all the frames of one save together
 
   // True if the video is already HDR (PQ / HLG), in which case we leave it alone.
   // Looking means grabbing a frame, so the answer is remembered for a few
@@ -733,6 +733,7 @@
       this.steerAt = 0;         // when steer last ran
       this.tickMs = 0;          // the screen's refresh interval, as steer sees it (ms)
       this.save = null;         // the frame-saving job under way (see saveStart)
+      this.slotsSaveable = false;   // whether the frame copies can be read back (Stats was on when they were made)
       this.tickGaps = [];
       this.eases = [];          // each time that was done, for the report
       // Holding a beat for the screen queue (see BEAT_AGE).
@@ -1584,7 +1585,11 @@
       const max = this.gpu.device.limits.maxTextureDimension2D;
       const w = Math.min(max, Math.max(16, Math.round(v.videoWidth * k)));
       const h = Math.min(max, Math.max(16, Math.round(v.videoHeight * k)));
-      if (this.slots && this.slots[0].tex.width === w && this.slots[0].tex.height === h) return;
+      // With Stats on the copies can also be read back, for the frame saver
+      // (see saveStart); otherwise they are exactly what they were in 1.2.6.
+      const saveable = !!settings.stats;
+      if (this.slots && this.slots[0].tex.width === w && this.slots[0].tex.height === h && this.slotsSaveable === saveable) return;
+      this.slotsSaveable = saveable;
       for (const sl of this.slots || []) sl.tex.destroy();
       this.dropNN();          // its bind groups are of the old frames
       const g = this.gpu;
@@ -1593,8 +1598,7 @@
       this.slots = [0, 1, 2].map(() => {
         const tex = g.device.createTexture({
           size: [w, h], format: SDR2HDR_FRAME_FORMAT,
-          // COPY_SRC: so that a frame can be saved to a file (see saveStart).
-          usage: GPUTextureUsage.RENDER_ATTACHMENT | GPUTextureUsage.TEXTURE_BINDING | GPUTextureUsage.COPY_SRC,
+          usage: GPUTextureUsage.RENDER_ATTACHMENT | GPUTextureUsage.TEXTURE_BINDING | (saveable ? GPUTextureUsage.COPY_SRC : 0),
         });
         const view = tex.createView();
         return {
@@ -1833,6 +1837,7 @@
       if (this.save) return 'already saving';
       if (this.dead || !this.slots || this.video.paused) return 'the video has to be playing';
       if (!this.polling) return 'Every refresh has to be on for this';
+      if (!this.slotsSaveable) return 'Stats was only just switched on; try again in a moment';
       if (this.ease.half) return 'the converter is easing off just now (every other frame is let go); try again in a moment';
       const job = { frames: [], need: SAVE_FRAMES, timer: 0 };
       // Four frames take a fraction of a second; this is for a video that
@@ -1853,7 +1858,7 @@
       // Every frame in the zip should be the same size, and a buffer this big
       // would be a risk to the page.
       if (first && (first.w !== w || first.h !== h)) { this.saveEnd('the picture changed size while saving'); return; }
-      if (rowBytes * h > SAVE_MAX_BYTES) { this.saveEnd('the frames are too big to save'); return; }
+      if (rowBytes * h * SAVE_FRAMES > SAVE_MAX_BYTES) { this.saveEnd('the frames are too big to save'); return; }
       try {
         const buf = device.createBuffer({ size: rowBytes * h, usage: GPUBufferUsage.COPY_DST | GPUBufferUsage.MAP_READ });
         const enc = device.createCommandEncoder();
@@ -1921,7 +1926,7 @@
           savedSize: size,
           frameTimestampsUs: job.frames.map((fr) => fr.ts),
         });
-        note(`${nameOf(this.video)}: ${job.frames.length} frames saved to a zip in Downloads`);
+        note(`${nameOf(this.video)}: ${job.frames.length} frames made into a zip and handed to the browser to download`);
         this.saveEnd();
       } catch (e) {
         this.saveEnd(`${e.name}: ${e.message}`);

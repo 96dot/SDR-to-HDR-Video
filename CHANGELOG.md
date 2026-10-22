@@ -19,8 +19,13 @@ All notable changes to Headroom HDR (called SDR to HDR Video before 0.11). Versi
 
 The page script was rebuilt from its last version before Smooth motion (1.2.6) with the badge fix and the frame saver put back, not by cutting 150 places out of the current one, so nothing is left behind by accident: no reference to the removed code remains in any file, except where the notes for later sessions explain the removal.
 
+### Found and fixed in review
+
+- The frame saver had put a "can be copied from" flag on the video's frame copies for every video, always. On some graphics cards that kind of flag can turn off a speed-up for drawing (not measured here). The flag is now only set while Stats is on, so with Stats off the copies are exactly what they were in 1.2.6. Switching Stats on remakes them once (a single frame's pause), and a save pressed in that first moment says to try again. The size limit (256 MB) now counts all four frames of one save together, and the note after a save says the zip was handed to the browser (it cannot know the browser let it through).
+
 ### Found and not changed
 
+- A page style such as `div::after { content: ""; display: block; padding-top: 56% }` can still add an invisible piece to the badge (the page's styles cannot reach inside it, but not its pseudo-elements). Not seen anywhere; a smaller cousin of the Reddit bug.
 - The lessons Smooth motion taught stay in this file's older entries: the cost of a match says nothing on dark sky or a crowd; mean error hides swirls, so look at the pictures; a screen recording at 30 fps cannot show a 60 Hz picture.
 - `PRIVACY.md` and the README no longer mention the recorder or the views.
 
