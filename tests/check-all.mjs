@@ -206,6 +206,14 @@ if (!args.has('--e2e')) {
     const server = http.createServer((q, r) => {
       if (q.url.endsWith('.webm')) { r.setHeader('content-type', 'video/webm'); r.end(fs.readFileSync(path.join(tmp, 't.webm'))); return; }
       r.setHeader('content-type', 'text/html');
+      if (q.url.startsWith('/hostile')) {
+        // A player whose styles reach every div, span and svg beside the video, !important and all
+        // (Reddit's did this to the badge in 1.3.10 and before).
+        r.end(`<style>.p{position:relative;width:320px;height:200px;background:#000}.p video{width:100%;height:100%}
+          .p > div{position:absolute !important;left:0 !important;right:0 !important;bottom:0 !important;top:auto !important;width:100% !important;height:50% !important;background:#0e0e18 !important;border-radius:999px 999px 0 0 !important;transform:none !important}
+          .p span,.p svg{display:none !important}</style><body style="margin:0"><div class="p"><video id=v muted autoplay loop src="/t.webm"></video></div>`);
+        return;
+      }
       r.end('<body style="margin:0"><video id=v muted autoplay loop src="/t.webm" style="width:224px;height:126px"></video>');
     }).listen(0);
     await withExtension(async (ctx) => {
@@ -246,6 +254,14 @@ if (!args.has('--e2e')) {
       const names = listing[1].split(',');
       const ok = listing[0] === 'None' && ['frame1.png', 'frame2.png', 'frame3.png', 'frame4.png', 'info.json', 'report.txt'].every((n) => names.includes(n));
       out(ok ? 'PASS' : 'FAIL', 'e2e: a real Alt+Shift+C saves four frames, the info and the report', listing.join(' | ').slice(0, 160));
+      // The badge must stay a one-line pill at the top whatever the page's styles say (with Stats on it
+      // is wide, with its numbers; the bug made it half the player tall).
+      const hostile = await ctx.newPage();
+      await hostile.goto(`${url}/hostile`);
+      await hostile.bringToFront();
+      await hostile.waitForTimeout(7000);
+      const box = await hostile.evaluate(() => { const b = document.querySelector('[data-sdr2hdr=badge]'); if (!b) return null; const x = b.getBoundingClientRect(); return { w: Math.round(x.width), h: Math.round(x.height), top: Math.round(x.top) }; });
+      out(box && box.h < 60 && box.top < 100 ? 'PASS' : 'FAIL', 'e2e: the badge stays a small pill under hostile page styles', box ? `${box.w}x${box.h} at ${box.top}` : 'no badge');
     });
     server.close();
   } catch (e) {

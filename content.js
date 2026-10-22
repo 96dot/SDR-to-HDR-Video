@@ -465,11 +465,20 @@
 
   // Small "HDR" pill for the top-right corner. Built node by node (no
   // innerHTML) so it works on sites that enforce Trusted Types.
+  // What the extension puts on a page must look the same whatever the page's
+  // own styles say: Reddit's player stretched the badge into a huge dark
+  // shape over the video (1.3.11). Every declaration is !important in the
+  // element's own style (which beats a page's !important too), everything
+  // starts from nothing (all:initial), and what is inside sits in a closed
+  // shadow root, out of reach of the page's selectors.
+  const armour = (css) => 'all:initial !important;' + css.split(';').filter((d) => d.trim()).map((d) => `${d.trim()} !important`).join(';') + ';';
+  const setImportant = (el, prop, value) => el.style.setProperty(prop, value, 'important');
+
   function makeBadge() {
     const NS = 'http://www.w3.org/2000/svg';
     const el = document.createElement('div');
     el.dataset.sdr2hdr = 'badge';
-    el.style.cssText =
+    el.style.cssText = armour(
       'position:absolute;pointer-events:none;display:flex;align-items:center;gap:5px;' +
       'padding:5px 10px 5px 8px;border-radius:999px;color:#fff;' +
       // No frosted glass (backdrop-filter) on anything drawn over the video:
@@ -478,7 +487,7 @@
       'box-shadow:0 4px 14px rgba(30,20,60,.28),inset 0 1px 0 rgba(255,255,255,.28);' +
       'text-shadow:0 1px 2px rgba(30,20,60,.5);box-sizing:border-box;' +
       'font:700 11px/1 "Segoe UI",system-ui,sans-serif;letter-spacing:.08em;white-space:nowrap;' +
-      'transform:translateX(-100%);transition:opacity .6s;opacity:.95;';
+      'transform:translateX(-100%);transition:opacity .6s;opacity:.95;');
 
     const svg = document.createElementNS(NS, 'svg');
     svg.setAttribute('viewBox', '0 0 16 16');
@@ -499,7 +508,7 @@
 
     const text = document.createElement('span');
     text.textContent = 'HDR';
-    el.append(svg, text);
+    el.attachShadow({ mode: 'closed' }).append(svg, text);
     el.label = text;
     return el;
   }
@@ -509,11 +518,11 @@
     const NS = 'http://www.w3.org/2000/svg';
     const el = document.createElement('div');
     el.dataset.sdr2hdr = 'knob';
-    el.style.cssText =
+    el.style.cssText = armour(
       'position:absolute;pointer-events:none;display:none;align-items:center;justify-content:center;' +
       'width:30px;height:30px;border-radius:50%;box-sizing:border-box;' +
       'background:rgba(255,255,255,.82);border:1px solid rgba(255,255,255,.9);' +
-      'box-shadow:0 4px 14px rgba(30,20,60,.35),inset 0 1px 0 #fff;transform:translate(-50%,-50%);';
+      'box-shadow:0 4px 14px rgba(30,20,60,.35),inset 0 1px 0 #fff;transform:translate(-50%,-50%);');
     const svg = document.createElementNS(NS, 'svg');
     svg.setAttribute('viewBox', '0 0 16 16');
     svg.setAttribute('width', '16');
@@ -526,7 +535,7 @@
     arrows.setAttribute('stroke-linejoin', 'round');
     arrows.setAttribute('fill', 'none');
     svg.append(arrows);
-    el.append(svg);
+    el.attachShadow({ mode: 'closed' }).append(svg);
     return el;
   }
 
@@ -1478,15 +1487,15 @@
 
     updateBadge() {
       const b = this.badge, stats = settings.stats;
-      b.style.display = settings.badge || stats ? 'flex' : 'none';
+      setImportant(b, 'display', settings.badge || stats ? 'flex' : 'none');
       // With stats on, the badge stays readable instead of fading.
       const dim = this.badgeDim && !stats;
-      b.style.opacity = dim ? '.4' : '.95';
-      b.style.background = stats ? 'rgba(24,18,44,.78)' : 'rgba(40,32,70,.55)';
-      b.style.letterSpacing = stats ? '.02em' : '.08em';
+      setImportant(b, 'opacity', dim ? '.4' : '.95');
+      setImportant(b, 'background', stats ? 'rgba(24,18,44,.78)' : 'rgba(40,32,70,.55)');
+      setImportant(b, 'letter-spacing', stats ? '.02em' : '.08em');
       const text = this.badgeText();
       if (b.label.textContent !== text) b.label.textContent = text;
-      this.knob.style.display = settings.split ? 'flex' : 'none';
+      setImportant(this.knob, 'display', settings.split ? 'flex' : 'none');
     }
 
     // Keep the canvas glued to the video's box, and work out object-fit scaling.
@@ -1546,9 +1555,9 @@
       c.style.transform = isTop || cs.transform === 'none' ? '' : cs.transform;
       c.style.transformOrigin = cs.transformOrigin;
 
-      b.style.left = (left + w - 12) + 'px';
-      b.style.top = (top + 12) + 'px';
-      b.style.zIndex = z;
+      setImportant(b, 'left', (left + w - 12) + 'px');
+      setImportant(b, 'top', (top + 12) + 'px');
+      setImportant(b, 'z-index', z || 'auto');
 
       // How the picture sits in the player's box: sx, sy are its size as a
       // fraction of the box (below 1 = bars on that axis, above 1 = cropped).
@@ -1592,9 +1601,9 @@
 
       // Split handle sits on the line, halfway down the video.
       const kn = this.knob;
-      kn.style.left = (left + w * (0.5 + (settings.splitPos - 0.5) * sx)) + 'px';
-      kn.style.top = (top + h / 2) + 'px';
-      kn.style.zIndex = z;
+      setImportant(kn, 'left', (left + w * (0.5 + (settings.splitPos - 0.5) * sx)) + 'px');
+      setImportant(kn, 'top', (top + h / 2) + 'px');
+      setImportant(kn, 'z-index', z || 'auto');
       this.covers = c.isConnected && c.offsetWidth > 0 && c.offsetHeight > 0;
       this.syncHide();
     }

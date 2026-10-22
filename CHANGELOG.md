@@ -2,6 +2,28 @@
 
 All notable changes to Headroom HDR (called SDR to HDR Video before 0.11). Versions follow the number in `manifest.json`.
 
+## 1.3.11 - 2026-10-22
+
+### Fixed
+
+- **A big dark bubble over videos on Reddit.** (Reported on Reddit, which showed a large soft shape in the lower half of the video, dark navy with a thin light edge, over both the picture and the black side bars; it went away with the extension off, and with "Badge on the video" off. The report was from the 1.2.3 in the store, but the code that did it is the same in every version.) It was the HDR badge. The badge is a small pill with fully rounded ends (`border-radius: 999px`), and Reddit's player styles every element beside the video (position, width, height, background); those styles reached the badge and stretched it into a bubble the size of half the player. Reproduced here with a page whose styles do that: the badge came out 640 by 200 pixels at the bottom of a 640 by 400 player, the shape in the screenshots; it is now 67 by 25 at the top right.
+  - Everything the extension puts on a page (the badge and the split handle) now has every declaration `!important` in its own style (which beats a page's `!important` too), starts from nothing (`all: initial`), and keeps what is inside it (the icon, the text) in a closed shadow root, out of reach of the page's selectors. The styles the extension changes later (shown or hidden, position, dimming) are set the same way.
+  - Why it only showed on Reddit: it needs a page whose styles are broad enough to catch an element it does not know. The canvas that carries the picture is set the same way as before; it has never been caught by one.
+
+### Added
+
+- **A check for it** in `tests/check-all.mjs --e2e`: a page whose styles reach every div, span and svg beside the video; the badge must stay a small pill at the top.
+
+### Found and not changed
+
+- On a video that uses the browser's own play bar (Reddit's old player did, in some setups), the bar is drawn under the picture and so cannot be seen while the extension is converting it (inline; in fullscreen it is uncovered). Clicks still reach it. Not the cause here (this video used the site's own controls), but worth knowing; it would be a change to what is covered.
+- The canvas is still placed with plain style rules; a page that restyled `canvas` elements beside a video could still move it.
+
+### Tested, and not
+
+- Checked here: the bug reproduced on the old code and gone on the new (above); the badge still shows "HDR" and the Stats text; the new check fails on the old code (320 by 100 at the bottom) and passes on the new; all 21 checks pass (`node tests/check-all.mjs --e2e`).
+- Not checked: Reddit itself (no access to it from here; the test page copies what its styles do), Brave on Windows, and every other site with broad player styles.
+
 ## 1.3.10 - 2026-10-04
 
 Nothing in the extension changed; this is the checking kit again.
