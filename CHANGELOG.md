@@ -2,6 +2,33 @@
 
 All notable changes to Headroom HDR (called SDR to HDR Video before 0.11). Versions follow the number in `manifest.json`.
 
+## 1.4.0 - 2026-10-22
+
+### Removed
+
+- **Smooth motion (frame interpolation), all of it.** At the owner's request. It was added in 1.3.0 and worked on through 1.3.11; this takes it out completely, so the extension is the 1.2.6 converter again, plus the two things below that stay. Gone: the Smooth motion setting in the popup (the main view is 36 px shorter, 430 px; the settings view is as it was), `interp.js` and its entry in `manifest.json`, the made-up pictures and the clock that scheduled them, the extra video-frame copy it kept (the converter is back to three), its lines in the report and on the badge, the Alt+Shift+I (views) and Alt+Shift+R (recorder) keys, and its tests and tools (`schedule`, `interp` and `pairs` tests, `pairs.mjs`, `tune.mjs`). A saved `interp` setting in the browser's storage is simply never read again.
+- It is all in git history (the commits from 07c9ae4 to 0a7420c), with the measurements in the changelog entries below, if it is ever wanted again.
+
+### Kept
+
+- **The badge fix of 1.3.11** (the Reddit bubble): the badge and the split handle ignore the page's styles.
+- **The frame saver (Alt+Shift+C, Stats on, Every refresh on)**: four real frames in a row, an info file and the report, as one zip in Downloads. It was built to tune Smooth motion on real footage, but it is a general way to look at a problem on real video, so it stays. Say if it should go too.
+- **The checking kit** (`tests/check-all.mjs`, `tests/CHECKS.md`, `tests/general/`), with the tests and checks that were only about Smooth motion taken out. `check-all.mjs --e2e` now runs every `tests/*.test.mjs`.
+
+### How it was done
+
+The page script was rebuilt from its last version before Smooth motion (1.2.6) with the badge fix and the frame saver put back, not by cutting 150 places out of the current one, so nothing is left behind by accident: no reference to the removed code remains in any file.
+
+### Found and not changed
+
+- The lessons Smooth motion taught stay in this file's older entries: the cost of a match says nothing on dark sky or a crowd; mean error hides swirls, so look at the pictures; a screen recording at 30 fps cannot show a 60 Hz picture.
+- `PRIVACY.md`, the README and the notes for later sessions no longer mention the recorder or the views.
+
+### Tested, and not
+
+- Checked here: `node tests/check-all.mjs --e2e` (syntax, lint, manifest, the two settings tables and the theme tables in step, the zip test, popup height in both views, the extension in a browser: a real key press saves frames, a fake one and Stats off do not, the badge stays a small pill under hostile page styles); a search of every file for anything left of the removed code (none).
+- Not checked: playback on your machine (the converter underneath is the 1.2.6 one with the later badge and saver changes, but I cannot play video here), and the store build: nothing has been uploaded.
+
 ## 1.3.11 - 2026-10-22
 
 ### Fixed

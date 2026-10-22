@@ -1,15 +1,12 @@
-// Saving real frames of what is playing, so that the picture can be tuned on
-// real footage instead of made-up pictures (Alt+Shift+C with Stats on; see
+// Saving real frames of what is playing, so that a problem can be looked at
+// on real footage (Alt+Shift+C with Stats on; see
 // Session.saveStart in content.js). The frames, and a small file about them
 // (the report and the sizes and times), are put in one zip that the browser
 // saves to Downloads. Nothing is sent anywhere: the zip is made here, in the
 // page, and what happens to it after that is for its owner to decide.
 //
-// This file holds what needs no page: turning frames into pictures (PNG), the
-// zip, and the one small shader pass that shrinks a picture for the recorder
-// (Alt+Shift+R: the last pictures put on screen); that pass uses the shared
-// part of the shaders in shader.js, loaded before it. The frames are read
-// back from the GPU in content.js.
+// This file holds what needs no page and no GPU: turning frames into pictures
+// (PNG) and the zip. The frames are read back from the GPU in content.js.
 
 // The CRC-32 that a zip keeps for each file.
 const SDR2HDR_CRC_TABLE = (() => {
@@ -73,41 +70,6 @@ function sdr2hdrFrameToRgba(words, w, h, rowBytes) {
     }
   }
   return out;
-}
-
-// Shrinks a picture to the size of the target. A picture that is not being
-// made smaller is copied as it is; otherwise four bilinear taps near the
-// middle of the target texel, which is not a proper box filter (it will alias
-// on fine detail when the picture is shrunk a lot) but is enough to look at.
-const SDR2HDR_SHRINK = SDR2HDR_COMMON + /* wgsl */ `
-@group(0) @binding(0) var samp: sampler;
-@group(0) @binding(1) var src: texture_2d<f32>;
-
-@fragment
-fn fs(in: VOut) -> @location(0) vec4f {
-  let px = vec2f(abs(dpdx(in.uv.x)), abs(dpdy(in.uv.y)));
-  if (f32(textureDimensions(src).x) * px.x < 1.01) {
-    return vec4f(textureSampleLevel(src, samp, in.uv, 0.0).rgb, 1.0);
-  }
-  var acc = vec3f(0.0);
-  for (var j = 0; j < 2; j++) {
-    for (var i = 0; i < 2; i++) {
-      let o = (vec2f(f32(i), f32(j)) - 0.5) * 0.5 * px;
-      acc += textureSampleLevel(src, samp, in.uv + o, 0.0).rgb;
-    }
-  }
-  return vec4f(acc * 0.25, 1.0);
-}
-`;
-
-function sdr2hdrShrinkPipeline(device) {
-  const module = device.createShaderModule({ code: SDR2HDR_SHRINK });
-  return device.createRenderPipeline({
-    layout: 'auto',
-    vertex: { module, entryPoint: 'vsFull' },
-    fragment: { module, entryPoint: 'fs', targets: [{ format: SDR2HDR_FRAME_FORMAT }] },
-    primitive: { topology: 'triangle-strip' },
-  });
 }
 
 // The GPU wants the rows of a copy to a buffer to start on 256 bytes.

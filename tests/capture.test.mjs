@@ -11,8 +11,7 @@ import { fileURLToPath } from 'url';
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const ctx = vm.createContext({ TextEncoder, Blob, Uint8Array, Uint32Array, Uint8ClampedArray, Date });
-// capture.js uses the shared part of the shaders, as it does in the extension (loaded after shader.js)
-for (const f of ['shader.js', 'capture.js']) vm.runInContext(fs.readFileSync(path.join(root, f), 'utf8'), ctx, { filename: f });
+vm.runInContext(fs.readFileSync(path.join(root, 'capture.js'), 'utf8'), ctx, { filename: 'capture.js' });
 const { sdr2hdrCrc32, sdr2hdrZip, sdr2hdrFrameToRgba } = vm.runInContext('({ sdr2hdrCrc32, sdr2hdrZip, sdr2hdrFrameToRgba })', ctx);
 
 let failed = 0;

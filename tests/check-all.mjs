@@ -7,12 +7,12 @@
 //   manifest    every file named in manifest.json exists
 //   in step     popup.js DEFAULTS against content.js DEFAULTS; the theme palettes and
 //               the Match colour maths in theme.js against background.js
-//   tests       schedule, capture, interp and pairs (the last two need Chromium)
+//   tests       every tests/*.test.mjs (capture: the zip and the colour conversion)
 //   popup       height of the main view and both flavours of the settings view, in
 //               headless Chromium with the extension loaded (the limit is 600 px)
 //   --e2e       the extension run in headless Chromium: a real key press saves
 //               frames, a made-up one does not, Stats off does not (needs ffmpeg)
-//   --quick     skip the slow tests (interp, pairs) and the popup and e2e runs
+//   --quick     skip the popup and e2e runs, which need a browser
 //
 // Exit code 0 only if nothing failed. A SKIP says what was missing. This does not
 // replace the three reviews or trying it on real video (tests/CHECKS.md).
@@ -137,8 +137,7 @@ const haveChrome = (() => {
   if (process.env.CHROME) return fs.existsSync(process.env.CHROME);
   try { return fs.readdirSync('/opt/pw-browsers').some((x) => x.startsWith('chromium-')); } catch { return false; }
 })();
-for (const [t, needs] of [['schedule', ''], ['capture', 'python3'], ['interp', 'chrome'], ['pairs', 'chrome']]) {
-  if ((needs === 'chrome' && !haveChrome) || (quick && needs === 'chrome')) { out('SKIP', `tests/${t}.test.mjs`, quick ? '--quick' : 'no Chromium found'); continue; }
+for (const t of fs.readdirSync(path.join(root, 'tests')).filter((f) => f.endsWith('.test.mjs')).map((f) => f.replace('.test.mjs', ''))) {
   const r = run(process.execPath, [`tests/${t}.test.mjs`]);
   const fails = (r.stdout.match(/^FAIL .*/gm) || []);
   out(r.status === 0 ? 'PASS' : 'FAIL', `tests/${t}.test.mjs`, r.status === 0 ? `${(r.stdout.match(/^PASS/gm) || []).length} checks` : (fails[0] || r.stderr.split('\n').slice(0, 2).join(' ')).slice(0, 200));

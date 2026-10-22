@@ -23,8 +23,8 @@ What it checks, and what a FAIL there means:
 | manifest paths | every file `manifest.json` names exists; the top `CHANGELOG.md` heading is the manifest's version |
 | DEFAULTS | `popup.js` and `content.js` DEFAULTS are the same, key by key |
 | theme palettes, Match maths | `theme.js` against `background.js`: the three palettes, and the Match colour maths on 200 random colours |
-| tests | `schedule` (timing logic, no GPU), `capture` (zip, colour conversion), `interp` (the shaders on made-up frames, software GPU), `pairs` (the saved-frames tool on a made-up pair) |
-| popup height | main view, and the settings view with the Amber, Match and Custom themes, measured with no HDR display (the tallest case). The limit is 600 px; today 466 main, 567 settings, 594 with the Match or Custom row. If it reports more than that, a popup change took the spare room |
+| tests | every `tests/*.test.mjs` (today `capture`: the zip and the colour conversion) |
+| popup height | main view, and the settings view with the Amber, Match and Custom themes, measured with no HDR display (the tallest case). The limit is 600 px; today 430 main, 567 settings, 594 with the Match or Custom row. If it reports more than that, a popup change took the spare room |
 | e2e | in headless Chromium with the extension: a real key press saves frames; a key press made by the page does not; with Stats off it does not |
 
 A new feature that has something the script can check should add it to the script (and a test file to `tests/`) as part of the change.
@@ -57,19 +57,17 @@ In headless Chromium where possible; the script's `--e2e` is the minimum. Things
 
 - A faked HDR display needs `--force-color-profile=hdr10`; do not use it when measuring the popup.
 - Keep the page's tab in front (`bringToFront`) or the browser throttles it to one frame a second; and a key press goes to whichever tab has the focus, so retry it.
-- The software GPU is far too slow to play video in real time, so timing is tested apart from the GPU (`tests/schedule.test.mjs`), and Smooth motion does not even turn on in headless (the screen refreshes too slowly). A throwaway copy of the extension with the "too slow, give up" limit raised can show the code paths work; never commit that.
+- The software GPU is far too slow to play video in real time, so timing is tested apart from the GPU, and anything that needs a fast screen can only be checked on the owner's machine.
 - `getMappedRange` can be called once per buffer. A WGSL variable cannot be called `fn`. Writes to a uniform buffer land before the next submit, so a loop that changes it needs a submit each time. Do not read "queue wait" as GPU cost: use the GPU's own timestamps.
 - **For a fix, reproduce the bug on the old code first, then show it gone on the new.** For a change to a picture, save the pictures before and after.
 
-## 5. Real footage (Smooth motion and anything about the picture)
+## 5. Real footage
 
-Made-up test pictures are not enough; the swirls in a dark sky (1.3.8) only showed on real frames. Everything below runs here, from files the owner sends.
+Made-up test pictures are not enough for anything about how the picture looks. Everything below runs here, from files the owner sends.
 
-1. The owner turns Stats on and presses **Alt+Shift+C** (four real frames in a row, as a zip) at the moment that goes wrong, or **Alt+Shift+R** before it and again just after (the last 60 pictures that were put on screen, and a log of each refresh; for judging the order and the made-up pictures). Both only save when Stats is on; the zips show what was playing, so the owner should look before sending. A split `.rar` needs `unrar` (`apt-get install unrar`); `7z` of that age cannot open it.
-2. `node tests/pairs.mjs <zip> <out folder> 0.25,0.5,0.75`: for each neighbouring pair, the made-up picture, where it fell back (red), the motion found and the numbers. Look at the pictures.
-3. **Score it against the truth.** With four consecutive frames, rebuild frame 2 from frames 1 and 3 and compare with the real frame 2 (and 3 from 2 and 4): `node tests/tune.mjs sets.json variants.json`. It tries many variations of the mixing shader in one run and prints, for each, the mean error out of 255 for the made-up picture against the plain frame. A change should lower it on the hard footage and leave the calm footage as it was.
-4. **Mean error hides the worst places** (a swirl scores about the same as a blur). Always look at the pictures too. To find a rule that separates the bad places from the good, score candidate signals per block (the 1.3.8 work did this: the cost of the match had no power; "the local motion differs from the overall one and the two warped pictures disagree" did).
-5. Do not change how the picture looks without asking the owner. Show before and after.
+1. The owner turns Stats on and presses **Alt+Shift+C** (four real frames in a row, as a zip) at the moment that goes wrong. It only saves when Stats is on; the zip shows what was playing, so the owner should look before sending. A split `.rar` needs `unrar` (`apt-get install unrar`); `7z` of that age cannot open it.
+2. Look at the frames; run the shaders or any rule on them in a throwaway page to score a change against the true frame (the 1.3.x Smooth motion work did this, and is in git history, with its tuning rig, if the method is wanted again). **Mean error hides the worst places**, so always look at the pictures too.
+3. Do not change how the picture looks without asking the owner. Show before and after.
 
 ## 6. Report, in plain words
 
