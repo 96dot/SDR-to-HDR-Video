@@ -1850,7 +1850,7 @@
       const w = sl.tex.width, h = sl.tex.height;
       const rowBytes = sdr2hdrRowBytes(w);
       const first = job.frames[0];
-      // The pair tool needs every frame the same size, and a buffer this big
+      // Every frame in the zip should be the same size, and a buffer this big
       // would be a risk to the page.
       if (first && (first.w !== w || first.h !== h)) { this.saveEnd('the picture changed size while saving'); return; }
       if (rowBytes * h > SAVE_MAX_BYTES) { this.saveEnd('the frames are too big to save'); return; }
@@ -1877,8 +1877,8 @@
       if (why) note(`${nameOf(this.video)}: frames not saved, because ${why}`);
     }
 
-    // Both savers end the same way: an info file (what the saver adds to the
-    // common facts), the report, one zip, one download.
+    // The saver ends with an info file (what it adds to the common facts),
+    // the report, one zip, one download.
     finishZip(prefix, files, extra) {
       const v = this.video;
       const enc = new TextEncoder();

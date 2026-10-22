@@ -17,12 +17,12 @@ All notable changes to Headroom HDR (called SDR to HDR Video before 0.11). Versi
 
 ### How it was done
 
-The page script was rebuilt from its last version before Smooth motion (1.2.6) with the badge fix and the frame saver put back, not by cutting 150 places out of the current one, so nothing is left behind by accident: no reference to the removed code remains in any file.
+The page script was rebuilt from its last version before Smooth motion (1.2.6) with the badge fix and the frame saver put back, not by cutting 150 places out of the current one, so nothing is left behind by accident: no reference to the removed code remains in any file, except where the notes for later sessions explain the removal.
 
 ### Found and not changed
 
 - The lessons Smooth motion taught stay in this file's older entries: the cost of a match says nothing on dark sky or a crowd; mean error hides swirls, so look at the pictures; a screen recording at 30 fps cannot show a 60 Hz picture.
-- `PRIVACY.md`, the README and the notes for later sessions no longer mention the recorder or the views.
+- `PRIVACY.md` and the README no longer mention the recorder or the views.
 
 ### Tested, and not
 

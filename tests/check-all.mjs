@@ -252,7 +252,7 @@ if (!args.has('--e2e')) {
       const listing = execFileSync('python3', ['-c', 'import zipfile,sys;z=zipfile.ZipFile(sys.argv[1]);print(z.testzip());print(",".join(z.namelist()))', zip], { encoding: 'utf8' }).trim().split('\n');
       const names = listing[1].split(',');
       const ok = listing[0] === 'None' && ['frame1.png', 'frame2.png', 'frame3.png', 'frame4.png', 'info.json', 'report.txt'].every((n) => names.includes(n));
-      out(ok ? 'PASS' : 'FAIL', 'e2e: a real Alt+Shift+C saves four frames, the info and the report', listing.join(' | ').slice(0, 160));
+      out(ok ? 'PASS' : 'FAIL', 'e2e: a real Alt+Shift+C saves four frames, the info and the report', listing[0] === 'None' ? `zip ok: ${listing[1]}` : listing.join(' | ').slice(0, 160));
       // The badge must stay a one-line pill at the top whatever the page's styles say (with Stats on it
       // is wide, with its numbers; the bug made it half the player tall).
       const hostile = await ctx.newPage();
