@@ -361,6 +361,12 @@
     return gpuPromise;
   }
 
+  // Saving frames (Alt+Shift+C, see saveStart): how many, the widest picture
+  // kept (wider ones are made smaller), and the biggest frame read back.
+  const SAVE_FRAMES = 4;
+  const SAVE_MAX_W = 1920;
+  const SAVE_MAX_BYTES = 256 * 1024 * 1024;   // for all the frames of one save together
+
   // True if the video is already HDR (PQ / HLG), in which case we leave it alone.
   // Looking means grabbing a frame, so the answer is remembered for a few
   // seconds per video; a new source or a change of resolution (a quality
@@ -421,11 +427,20 @@
 
   // Small "HDR" pill for the top-right corner. Built node by node (no
   // innerHTML) so it works on sites that enforce Trusted Types.
+  // What the extension puts on a page must look the same whatever the page's
+  // own styles say: Reddit's player stretched the badge into a huge dark
+  // shape over the video (1.3.11). Every declaration is !important in the
+  // element's own style (which beats a page's !important too), everything
+  // starts from nothing (all:initial), and what is inside sits in a closed
+  // shadow root, out of reach of the page's selectors.
+  const armour = (css) => 'all:initial !important;' + css.split(';').filter((d) => d.trim()).map((d) => `${d.trim()} !important`).join(';') + ';';
+  const setImportant = (el, prop, value) => el.style.setProperty(prop, value, 'important');
+
   function makeBadge() {
     const NS = 'http://www.w3.org/2000/svg';
     const el = document.createElement('div');
     el.dataset.sdr2hdr = 'badge';
-    el.style.cssText =
+    el.style.cssText = armour(
       'position:absolute;pointer-events:none;display:flex;align-items:center;gap:5px;' +
       'padding:5px 10px 5px 8px;border-radius:999px;color:#fff;' +
       // No frosted glass (backdrop-filter) on anything drawn over the video:
@@ -434,7 +449,7 @@
       'box-shadow:0 4px 14px rgba(30,20,60,.28),inset 0 1px 0 rgba(255,255,255,.28);' +
       'text-shadow:0 1px 2px rgba(30,20,60,.5);box-sizing:border-box;' +
       'font:700 11px/1 "Segoe UI",system-ui,sans-serif;letter-spacing:.08em;white-space:nowrap;' +
-      'transform:translateX(-100%);transition:opacity .6s;opacity:.95;';
+      'transform:translateX(-100%);transition:opacity .6s;opacity:.95;');
 
     const svg = document.createElementNS(NS, 'svg');
     svg.setAttribute('viewBox', '0 0 16 16');
@@ -455,7 +470,7 @@
 
     const text = document.createElement('span');
     text.textContent = 'HDR';
-    el.append(svg, text);
+    el.attachShadow({ mode: 'closed' }).append(svg, text);
     el.label = text;
     return el;
   }
@@ -465,11 +480,11 @@
     const NS = 'http://www.w3.org/2000/svg';
     const el = document.createElement('div');
     el.dataset.sdr2hdr = 'knob';
-    el.style.cssText =
+    el.style.cssText = armour(
       'position:absolute;pointer-events:none;display:none;align-items:center;justify-content:center;' +
       'width:30px;height:30px;border-radius:50%;box-sizing:border-box;' +
       'background:rgba(255,255,255,.82);border:1px solid rgba(255,255,255,.9);' +
-      'box-shadow:0 4px 14px rgba(30,20,60,.35),inset 0 1px 0 #fff;transform:translate(-50%,-50%);';
+      'box-shadow:0 4px 14px rgba(30,20,60,.35),inset 0 1px 0 #fff;transform:translate(-50%,-50%);');
     const svg = document.createElementNS(NS, 'svg');
     svg.setAttribute('viewBox', '0 0 16 16');
     svg.setAttribute('width', '16');
@@ -482,7 +497,7 @@
     arrows.setAttribute('stroke-linejoin', 'round');
     arrows.setAttribute('fill', 'none');
     svg.append(arrows);
-    el.append(svg);
+    el.attachShadow({ mode: 'closed' }).append(svg);
     return el;
   }
 
@@ -717,6 +732,8 @@
       this.procBase = 0;        // what the decoder usually takes over a frame of this video (ms)
       this.steerAt = 0;         // when steer last ran
       this.tickMs = 0;          // the screen's refresh interval, as steer sees it (ms)
+      this.save = null;         // the frame-saving job under way (see saveStart)
+      this.slotsSaveable = false;   // whether the frame copies can be read back (Stats was on when they were made)
       this.tickGaps = [];
       this.eases = [];          // each time that was done, for the report
       // Holding a beat for the screen queue (see BEAT_AGE).
@@ -883,7 +900,29 @@
     // Start the every-refresh loop if it should be running. It stops by
     // itself when the video pauses or the setting is switched off.
     syncLoop() {
-      if (!this.dead && settings.poll && !this.raf && !this.video.paused) this.raf = requestAnimationFrame(this.onTick);
+      if (this.dead) return;
+      if (!settings.poll) this.endEpisode();
+      else if (!this.raf && !this.video.paused) this.raf = requestAnimationFrame(this.onTick);
+    }
+
+    // Without Every refresh nothing steers, and every frame is taken whatever
+    // the episode says. So an episode of half rate (or a held beat) that was
+    // going when it was switched off is ended here, or it would stay on
+    // record for ever, keep Auto quality from stepping, and be judged as
+    // having failed when Every refresh came back. It is not counted as a try.
+    endEpisode() {
+      const e = this.ease, k = this.beat;
+      if (e.half) {
+        const t = performance.now();
+        e.half = false;
+        e.fullAt = t;
+        if (e.now) { e.now.ms = t - e.at; e.now.ended = true; }
+        this.restUntil = 0;
+        note(`${nameOf(this.video)}: Every refresh is off; taking every frame`);
+        this.updateBadge();
+      }
+      k.now = null;
+      k.due = false;
     }
 
     // The timestamp of the frame the video is showing right now, or null if
@@ -1391,15 +1430,15 @@
 
     updateBadge() {
       const b = this.badge, stats = settings.stats;
-      b.style.display = settings.badge || stats ? 'flex' : 'none';
+      setImportant(b, 'display', settings.badge || stats ? 'flex' : 'none');
       // With stats on, the badge stays readable instead of fading.
       const dim = this.badgeDim && !stats;
-      b.style.opacity = dim ? '.4' : '.95';
-      b.style.background = stats ? 'rgba(24,18,44,.78)' : 'rgba(40,32,70,.55)';
-      b.style.letterSpacing = stats ? '.02em' : '.08em';
+      setImportant(b, 'opacity', dim ? '.4' : '.95');
+      setImportant(b, 'background', stats ? 'rgba(24,18,44,.78)' : 'rgba(40,32,70,.55)');
+      setImportant(b, 'letter-spacing', stats ? '.02em' : '.08em');
       const text = this.badgeText();
       if (b.label.textContent !== text) b.label.textContent = text;
-      this.knob.style.display = settings.split ? 'flex' : 'none';
+      setImportant(this.knob, 'display', settings.split ? 'flex' : 'none');
     }
 
     // Keep the canvas glued to the video's box, and work out object-fit scaling.
@@ -1459,9 +1498,23 @@
       c.style.transform = isTop || cs.transform === 'none' ? '' : cs.transform;
       c.style.transformOrigin = cs.transformOrigin;
 
-      b.style.left = (left + w - 12) + 'px';
-      b.style.top = (top + 12) + 'px';
-      b.style.zIndex = z;
+      // The badge and the split handle are placed from where the canvas really
+      // is on screen, in the coordinates of the box they are placed in. A page
+      // may move the video with a transform (Reddit centres its player with
+      // top: 50% and translate(-50%, -50%)): the video's own offsets are then
+      // half a player away from where it is seen.
+      const seen = isTop ? null : c.getBoundingClientRect();
+      const origin = (el) => {
+        const p = el.offsetParent;
+        if (!seen || !p) return null;
+        if ((p === document.body || p === document.documentElement) && getComputedStyle(p).position === 'static') return [-scrollX, -scrollY];
+        const r = p.getBoundingClientRect();
+        return [r.left + p.clientLeft - p.scrollLeft, r.top + p.clientTop - p.scrollTop];
+      };
+      const bo = origin(b);
+      setImportant(b, 'left', (bo ? seen.right - bo[0] - 12 : left + w - 12) + 'px');
+      setImportant(b, 'top', (bo ? seen.top - bo[1] + 12 : top + 12) + 'px');
+      setImportant(b, 'z-index', z || 'auto');
 
       // How the picture sits in the player's box: sx, sy are its size as a
       // fraction of the box (below 1 = bars on that axis, above 1 = cropped).
@@ -1505,9 +1558,10 @@
 
       // Split handle sits on the line, halfway down the video.
       const kn = this.knob;
-      kn.style.left = (left + w * (0.5 + (settings.splitPos - 0.5) * sx)) + 'px';
-      kn.style.top = (top + h / 2) + 'px';
-      kn.style.zIndex = z;
+      const ko = origin(kn);
+      setImportant(kn, 'left', (ko ? seen.left - ko[0] + seen.width * (0.5 + (settings.splitPos - 0.5) * sx) : left + w * (0.5 + (settings.splitPos - 0.5) * sx)) + 'px');
+      setImportant(kn, 'top', (ko ? seen.top - ko[1] + seen.height / 2 : top + h / 2) + 'px');
+      setImportant(kn, 'z-index', z || 'auto');
       this.covers = c.isConnected && c.offsetWidth > 0 && c.offsetHeight > 0;
       this.syncHide();
     }
@@ -1546,7 +1600,11 @@
       const max = this.gpu.device.limits.maxTextureDimension2D;
       const w = Math.min(max, Math.max(16, Math.round(v.videoWidth * k)));
       const h = Math.min(max, Math.max(16, Math.round(v.videoHeight * k)));
-      if (this.slots && this.slots[0].tex.width === w && this.slots[0].tex.height === h) return;
+      // With Stats on the copies can also be read back, for the frame saver
+      // (see saveStart); otherwise they are exactly what they were in 1.2.6.
+      const saveable = !!settings.stats;
+      if (this.slots && this.slots[0].tex.width === w && this.slots[0].tex.height === h && this.slotsSaveable === saveable) return;
+      this.slotsSaveable = saveable;
       for (const sl of this.slots || []) sl.tex.destroy();
       this.dropNN();          // its bind groups are of the old frames
       const g = this.gpu;
@@ -1555,7 +1613,7 @@
       this.slots = [0, 1, 2].map(() => {
         const tex = g.device.createTexture({
           size: [w, h], format: SDR2HDR_FRAME_FORMAT,
-          usage: GPUTextureUsage.RENDER_ATTACHMENT | GPUTextureUsage.TEXTURE_BINDING,
+          usage: GPUTextureUsage.RENDER_ATTACHMENT | GPUTextureUsage.TEXTURE_BINDING | (saveable ? GPUTextureUsage.COPY_SRC : 0),
         });
         const view = tex.createView();
         return {
@@ -1780,6 +1838,114 @@
       if (!sl) return;
       this.seenTs = ts;
       this.queue.push(sl);
+      if (this.save) this.saveTake(sl, ts);
+    }
+
+    // Alt+Shift+C (with Stats on): save SAVE_FRAMES frames in a row, exactly as
+    // the converter holds them, with a note of the sizes and times and the
+    // report, as one zip in Downloads (see capture.js). The frames are read
+    // back from the GPU as they are copied, and nothing is sent anywhere.
+    // They are taken in check, so this needs Every refresh on; and with
+    // easing off (see EASE_SLOW) every other frame is let go, so it waits.
+    // Returns why not, or '' if it started.
+    saveStart() {
+      if (this.save) return 'already saving';
+      if (this.dead || !this.slots || this.video.paused) return 'the video has to be playing';
+      if (!this.polling) return 'Every refresh has to be on for this';
+      if (!this.slotsSaveable) return 'Stats was only just switched on; try again in a moment';
+      if (this.ease.half) return 'the converter is easing off just now (every other frame is let go); try again in a moment';
+      const job = { frames: [], need: SAVE_FRAMES, timer: 0 };
+      // Four frames take a fraction of a second; this is for a video that
+      // stalls or stops.
+      job.timer = setTimeout(() => this.saveEnd('not enough new frames came in (is the video still playing?)'), 8000);
+      this.save = job;
+      return '';
+    }
+
+    // Called with each frame as it is copied (see check): read it back.
+    saveTake(sl, ts) {
+      const job = this.save;
+      if (!job || job.frames.length >= job.need) return;
+      const { device } = this.gpu;
+      const w = sl.tex.width, h = sl.tex.height;
+      const rowBytes = sdr2hdrRowBytes(w);
+      const first = job.frames[0];
+      // Every frame in the zip should be the same size, and a buffer this big
+      // would be a risk to the page.
+      if (first && (first.w !== w || first.h !== h)) { this.saveEnd('the picture changed size while saving'); return; }
+      if (rowBytes * h * SAVE_FRAMES > SAVE_MAX_BYTES) { this.saveEnd('the frames are too big to save'); return; }
+      try {
+        const buf = device.createBuffer({ size: rowBytes * h, usage: GPUBufferUsage.COPY_DST | GPUBufferUsage.MAP_READ });
+        const enc = device.createCommandEncoder();
+        enc.copyTextureToBuffer({ texture: sl.tex }, { buffer: buf, bytesPerRow: rowBytes }, [w, h]);
+        device.queue.submit([enc.finish()]);
+        job.frames.push({ buf, ts, w, h, rowBytes });
+      } catch (e) {
+        this.saveEnd(`a frame could not be read back (${e.name}: ${e.message})`);
+        return;
+      }
+      if (job.frames.length === job.need) this.saveFinish(job);
+    }
+
+    // The job is over, or given up: let go of what it held.
+    saveEnd(why = '') {
+      const job = this.save;
+      if (!job) return;
+      this.save = null;
+      clearTimeout(job.timer);
+      for (const fr of job.frames) { try { fr.buf.destroy(); } catch {} }
+      if (why) note(`${nameOf(this.video)}: frames not saved, because ${why}`);
+    }
+
+    // The saver ends with an info file (what it adds to the common facts),
+    // the report, one zip, one download.
+    finishZip(prefix, files, extra) {
+      const v = this.video;
+      const enc = new TextEncoder();
+      const info = {
+        ...extra,
+        version: chrome.runtime.getManifest().version,
+        site: location.hostname,
+        saved: new Date().toISOString(),
+        videoSize: [v.videoWidth, v.videoHeight],
+        srcFps: this.srcFps || null,
+        refreshMs: this.tickMs || null,
+        playbackRate: v.playbackRate,
+        settings: { perf: settings.perf, upscale: settings.upscale, method: settings.method, sharpen: settings.sharpen, peak: settings.peak },
+      };
+      let report = '';
+      try { report = buildReport(0); } catch (e) { report = `(no report: ${e.name}: ${e.message})`; }
+      files.push({ name: 'info.json', data: enc.encode(JSON.stringify(info, null, 2)) }, { name: 'report.txt', data: enc.encode(report) });
+      const d = new Date(), p = (n) => String(n).padStart(2, '0');
+      const host = location.hostname.replace(/[^a-z0-9.-]/gi, '_').slice(0, 40) || 'page';
+      sdr2hdrDownload(sdr2hdrZip(files, d), `headroom-${prefix}-${host}-${d.getFullYear()}${p(d.getMonth() + 1)}${p(d.getDate())}-${p(d.getHours())}${p(d.getMinutes())}${p(d.getSeconds())}.zip`);
+    }
+
+    async saveFinish(job) {
+      clearTimeout(job.timer);     // what is left is a finite job, not a stalled video
+      try {
+        const files = [];
+        let size = null;
+        for (let i = 0; i < job.frames.length; i++) {
+          const fr = job.frames[i];
+          await fr.buf.mapAsync(GPUMapMode.READ);
+          const rgba = sdr2hdrFrameToRgba(new Uint32Array(fr.buf.getMappedRange()), fr.w, fr.h, fr.rowBytes);
+          fr.buf.unmap();
+          const png = await sdr2hdrPng(rgba, fr.w, fr.h, SAVE_MAX_W);
+          size = [png.w, png.h];
+          files.push({ name: `frame${i + 1}.png`, data: png.bytes });
+        }
+        this.finishZip('frames', files, {
+          what: 'Frames saved by Headroom HDR (Alt+Shift+C), as the converter held them, in order',
+          frameSize: [job.frames[0].w, job.frames[0].h],
+          savedSize: size,
+          frameTimestampsUs: job.frames.map((fr) => fr.ts),
+        });
+        note(`${nameOf(this.video)}: ${job.frames.length} frames made into a zip and handed to the browser to download`);
+        this.saveEnd();
+      } catch (e) {
+        this.saveEnd(`${e.name}: ${e.message}`);
+      }
     }
 
     // Once per screen refresh while playing: keep the pacing and the asking
@@ -2206,10 +2372,10 @@
       lines.push(`Easing off for the decoder: ${this.eases.length} time${this.eases.length === 1 ? '' : 's'}. Decode time now: ${n(this.procNow)} ms a frame (usual for this video: ${n(this.procBase || NaN)}).`,
         '    time   at half rate  decode time before  at the end  rested  outcome');
       for (const r of this.eases.slice(-25)) {
-        const live = r.worked == null;
+        const live = r.worked == null && !r.ended;
         lines.push(`${(((r.at - this.born) / 1000).toFixed(1) + 's').padStart(8)}${(((live ? Math.max(0, (this.steerAt || t) - r.at) : r.ms) / 1000).toFixed(1) + ' s').padStart(15)}` +
           `${((r.dropping ? 'drops, ' : '') + n(r.procBefore) + ' ms').padStart(20)}${(n(live ? this.procNow : r.procAfter) + ' ms').padStart(12)}` +
-          `${(r.rested ? 'yes' : 'no').padStart(8)}  ${live ? 'still going' : (r.worked ? 'the decoder caught up' : 'did not help')}`);
+          `${(r.rested ? 'yes' : 'no').padStart(8)}  ${live ? 'still going' : (r.ended ? 'stopped (Every refresh was switched off)' : (r.worked ? 'the decoder caught up' : 'did not help'))}`);
       }
       lines.push(...this.beatLines(), ...this.paceLines());
       return lines;
@@ -2260,6 +2426,7 @@
       // Written to cope with a session that never finished setting up, where
       // some of these don't exist yet.
       clearTimeout(this.badgeTimer);
+      this.saveEnd('the video stopped being converted');
       if (this.raf) cancelAnimationFrame(this.raf);
       clearTimeout(this.mid);
       if (this.onPlaying) this.video.removeEventListener('playing', this.onPlaying);
@@ -2495,6 +2662,15 @@
     e.preventDefault();
     e.stopImmediatePropagation();
     try { chrome.storage.local.set({ poll: !settings.poll }); } catch {}
+  }, true);
+  // ... and Alt+Shift+C saves a few frames in a row to a zip (see saveStart).
+  window.addEventListener('keydown', (e) => {
+    if (!e.isTrusted || !settings.stats || !e.altKey || !e.shiftKey || e.code !== 'KeyC' || e.repeat) return;
+    e.preventDefault();
+    e.stopImmediatePropagation();
+    const s = [...sessions.values()].find((x) => !x.dead && x.slots && !x.video.paused);
+    const why = s ? s.saveStart() : 'no video is being converted and playing';
+    note(why ? `saving frames: not started, ${why}` : `${nameOf(s.video)}: saving ${SAVE_FRAMES} frames`);
   }, true);
   // With Stats on, Alt+Shift+A starts a test of pacing (see pacer.js): it is
   // switched off and on again in 30-second turns, so a few minutes of playing
@@ -2736,7 +2912,9 @@
       // The page has moved the video somewhere else and left the overlay
       // behind, where it would go on drawing while the video sat invisible in
       // its new place. Start again beside it.
-      if (s.canvas.parentNode !== v.parentNode) { s.destroy('the page moved the video'); continue; }
+      // (In a bare video's fullscreen the overlay is in the top-layer box on
+      // purpose, so it is that box that has to still be on the page.)
+      if (s.top ? !(s.pop && s.pop.isConnected) : s.canvas.parentNode !== v.parentNode) { s.destroy('the page moved the video'); continue; }
       s.layout();
       s.perfTick();
       // A video that has been drawing fine for a while gets a clean slate: an

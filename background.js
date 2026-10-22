@@ -1,5 +1,6 @@
-// Keyboard shortcuts. Each one just flips a stored setting; every tab's
-// content script is already listening for storage changes and reacts.
+// Keyboard shortcuts. Each one changes a stored setting (the method one goes
+// round shader, guided and model); every tab's content script is already
+// listening for storage changes and reacts.
 const TOGGLES = { 'toggle-hdr': 'enabled', 'toggle-split': 'split' };
 
 chrome.commands.onCommand.addListener(async (command) => {
@@ -33,7 +34,11 @@ const dnr = chrome.declarativeNetRequest;
 // this tab may be read by this origin, cookies included". Made one at a time,
 // so two videos asking at once can't be given the same rule number.
 let ruleQueue = Promise.resolve();
-const ensureRule = (origin, tabId) => (ruleQueue = ruleQueue.then(() => makeRule(origin, tabId), () => makeRule(origin, tabId)));
+const ensureRule = (origin, tabId) => {
+  const run = ruleQueue.then(() => makeRule(origin, tabId));
+  ruleQueue = run.catch(() => {});     // a rule that failed must not stop the clean-ups queued after it
+  return run;
+};
 const ruleOrigin = (r) => ((r.action.responseHeaders || []).find((h) => h.header === 'access-control-allow-origin') || {}).value || '';
 async function makeRule(origin, tabId) {
   const rules = await dnr.getSessionRules();

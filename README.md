@@ -89,7 +89,7 @@ The model runs once per video frame on a small copy of the picture, as GPU compu
 
 ### Per-site settings
 
-When the popup is opened on a web page it shows that site's hostname with two switches:
+When the popup is opened on a web page it shows that site's hostname with three switches:
 
 - **Turn off here** disables the extension on that site only.
 - **Unlock locked videos** is for sites where the popup reports a locked video; see the next section.
@@ -137,7 +137,7 @@ It does not work on DRM-protected video; nothing does.
 |---|---|
 | Alt+Shift+H | Turn HDR conversion on or off |
 | Alt+Shift+S | Turn split view on or off |
-| Alt+Shift+M | Switch between the shader and your trained model |
+| Alt+Shift+M | Go round the methods: shader, guided, model (needs a loaded model) |
 
 Chrome may not assign these automatically when an unpacked extension is reloaded. Set or change them at `chrome://extensions/shortcuts`.
 
@@ -192,7 +192,7 @@ With **Stats** switched on the report goes deeper. The GPU is timed on every fra
 
 With Stats on, runs are kept across a reload of the page for half an hour, so the one report at the end has both.
 
-Three keys work while Stats is on, including in fullscreen, and the report counts hitches separately for each setting they switch between: **Alt+Shift+O** switches Hide original, **Alt+Shift+P** switches Every refresh, and **Alt+Shift+A** starts or stops a test that switches Pacing off and on in 30-second turns.
+Four keys work while Stats is on, including in fullscreen: **Alt+Shift+O** switches Hide original, **Alt+Shift+P** switches Every refresh (the report counts hitches separately for each setting they switch between), **Alt+Shift+A** starts or stops a test that switches Pacing off and on in 30-second turns, and **Alt+Shift+C** saves four frames in a row of the video that is playing (as the converter holds them, never wider than 1920), with a small info file and the report, as one zip in your Downloads folder, to look at a problem on real footage. It needs Every refresh on. The zip is made in the page and goes nowhere by itself; it holds what was playing, so look at the frames before you share it.
 
 On Windows (or anywhere with Stats on), while a video of 45 frames a second or more is being converted, the browser's GPU thread is asked directly, and a beat is held as soon as it shows the hand-over stuck: a worker puts a question to the browser's GPU process that takes no work to answer, about thirty times a second, and times the answer. The answer has to come from the one thread that also hands redraws to Windows, so while a hand-over is stuck the answer arrives with the next screen refresh and not before. The report says how often that happened with pacing on and off, lists each time the hand-over was stuck (when, for how long, and how soon a beat followed), and has a small table of how long the answer took at each moment of the refresh, which shows at what moment the browser is busy handing over.
 
@@ -204,7 +204,7 @@ The extension also keeps its background work light while a video plays: looking 
 
 `expansionGain()` in `shader.js` is the one function that decides how much brighter each pixel gets. With a model loaded and selected, that decision comes from the model instead, and the rest of the main pass is unchanged.
 
-The model is a small convolutional network (about 52,000 weights). Each video frame is shrunk to 480x270 and run through it in eleven compute-shader passes (`model.js`). The network's picture is always 16:9; a video of another shape sits in it with black bars, unstretched, which is how the trainer showed it such films. It does not output a picture. It outputs a 120x68 map of brightness curves: at each spot, four numbers giving the gain for pixels of four brightness levels. The main pass reads each pixel's gain from the curve at its position, so the per-pixel cost is one extra texture read.
+The model is a small convolutional network (about 52,000 weights). Each video frame is shrunk to 480x270 and run through it in a preparation step and eleven compute-shader passes (`model.js`). The network's picture is always 16:9; a video of another shape sits in it with black bars, unstretched, which is how the trainer showed it such films. It does not output a picture. It outputs a 120x68 map of brightness curves: at each spot, four numbers giving the gain for pixels of four brightness levels. The main pass reads each pixel's gain from the curve at its position, so the per-pixel cost is one extra texture read.
 
 The curves are eased over about a tenth of a second so the picture doesn't flicker from frame to frame; where they change a lot at once, as at a scene cut, the new value is used straight away.
 
@@ -241,7 +241,7 @@ Messages from the extension appear in the page's DevTools console, prefixed `[He
 ## Permissions
 
 - **Access to all sites**: the content script has to run on any page that might contain a video.
-- **declarativeNetRequest**: used only by **Unlock locked videos**, and only on sites where you switch that on, to add the response headers that let a video be read.
+- **declarativeNetRequestWithHostAccess**: used only by **Unlock locked videos**, and only on sites where you switch that on, to add the response headers that let a video be read.
 - **storage**: saves your settings, and a trained model if you load one, locally. Nothing is synced or sent anywhere.
 - **One page any site may load** (`pacer.html`, a web-accessible resource): the frame that pacing runs in has to be loadable inside the page being watched. It holds nothing and does nothing but pace that page's own drawing; a site could tell from it that the extension is installed.
 
@@ -261,17 +261,20 @@ The extension makes no network requests.
 | `pacer.html`, `pacer-frame.js` | The extension's own frame, one dot big and see-through, put into a page that is converting fast video. Its workers can't be started from the page itself on sites like YouTube. |
 | `pacer-worker.js` | The four workers in that frame: one paces, one asks the GPU thread, one keeps time for those two, one keeps the browser's timers fine. |
 | `model.html`, `model-page.js` | The page for loading or removing a trained model. |
-| `background.js` | Handles the keyboard shortcuts, and the header rules for unlocking videos. |
+| `background.js` | Handles the keyboard shortcuts, the header rules for unlocking videos, the colouring of the toolbar icon, and hands the FSRCNNX files to the page that asks for them. |
+| `theme.js` | The colour themes (Amber, Ocean, Aurora, Match, Custom): puts the chosen one on every extension page and colours the popup's logo. Its colour maths is repeated in `background.js` for the toolbar icon; keep the two in step. |
 | `popup.html`, `popup.js` | The settings popup. |
 | `calibrate.html`, `calibrate.js` | The display calibration page. |
-| `ui.css` | Shared styling for the popup and calibration page. |
-| `icons/` | Generated raster icon artwork, browser sizes and colour variants for the four themes. |
+| `ui.css` | Shared styling for the popup, the calibration page and the model page. |
+| `icons/` | The packaged icon in four sizes, and its SVG artwork. The toolbar icon and the popup's logo are recoloured from it for the chosen theme as they are drawn. |
 | `CHANGELOG.md` | What changed in each version. |
 | `PRIVACY.md` | The privacy policy: nothing is collected or sent. |
 | `upnet.js` | Reads the FSRCNNX shader files and turns their passes into WGSL, for the Best level of Upscaling. |
+| `capture.js` | The frame saver (Alt+Shift+C, Stats on): turns the GPU's frames into PNGs and packs them with a note and the report into a zip. The frames are read back in `content.js`. |
 | `third_party/fsrcnnx/` | The FSRCNNX shader files by igv, unchanged, under the LGPL 3 (their licence texts are beside them). Not under the MIT licence of the rest. |
 | `LICENSE-FSR.txt` | The licence of AMD's FidelityFX Super Resolution 1, which the upscaling pass is a port of. |
 | `docs/` | Screenshots used in this README. |
+| `tests/` | Checks that run in headless Chromium or plain Node (see `tests/README.md`). Not part of the extension. |
 
 ## Testing status
 
@@ -282,6 +285,7 @@ Smoothness was worked out on that same machine, in Brave on Windows 11, with 4K 
 Pacing was checked in headless Chromium on Linux with browser traces: the browser's drawing moved from 0.1 ms to between 5 and 6 ms into each refresh and back when switched; a page with nothing to redraw stayed undrawn; an answer that came too late cost that one refresh the wait and nothing after it; a worker that hung was ignored by the browser after ten refreshes; and on a page that forbids workers and frames it runs all the same, from the extension's own frame; with sleeps made to run over, it doesn't start and says why. A made-up stuck hand-over was recognised by the worker that asks the GPU thread, with the right moment in the refresh. What none of that can show is the thing it is for: whether a later hand-over keeps Windows from getting stuck. That had not been run on Windows when this was written, and neither had the two things 0.10.11 does for Windows alone (keeping the frame's process out of the background, and keeping its timers fine): those were read out of the browser's source.
 
 The trained-model path was checked the same way: fed a real video frame, the GPU version of the network gives the same numbers as the PyTorch original (to within 0.000001) on a random model; models with known answers produce the expected brightness on screen, including at the right place in the picture for a video that isn't 16:9. Failures were also injected on purpose (while starting, while drawing, and unreadable frames) to check that conversion recovers. How a real trained model looks, and how fast it runs on real hardware, had not been checked when this was written.
+
 
 ## License
 
